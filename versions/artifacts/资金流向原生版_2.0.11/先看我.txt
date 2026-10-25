@@ -1,0 +1,19 @@
+资金流向 · 原生版 v2.0.11（现役 · 龙头领先反应修复版）
+==================================================
+· 双击「资金流向原生版.exe」即用，整个文件夹别拆散。
+· 本版修复（v2.0.10 遗留的真实 bug）：
+    题材簇页「龙头领先反应」子模块一直停在「等待分析…」、结果永不显示。
+  根因：v2.0.9 把 on_data 拆成两半时，后半段 _on_data_charts() 仍引用
+  前半段 on_data 的局部变量（d / src / is_live_view / _early），
+  而这些名字在新方法作用域里并不存在 —— 每次数据到位必抛 NameError；
+  又因为调用点在 QTimer.singleShot 的 lambda 里（事件循环下一拍执行），
+  异常只打到 stderr、不中断事件循环，表现就是「界面不崩、日志无痕、功能静默失效」。
+  连带影响：同一段尾部的「实盘日归档 maybe_archive」也被一起跳过。
+  修法：把 4 个上下文改为显式传参 _on_data_charts(_t2b, d, src, is_live_view, _early)。
+· 验收（离屏 QT_QPA_PLATFORM=offscreen，冻结数据受控比对）：
+    · 修复前：exe 日志 Traceback NameError，题材簇页无 leader_grid 表；
+    · 修复后：日志 leader cache hit: 22 boards，leader_grid 表 22 行真实数据；
+    · 其余 30 个页面产物逐字节一致（零回归）；
+    · 新增静态守卫 _scopechk.py：扫「被引用但未定义的全局名」，防同类回归。
+· 功能与数据口径不变；v2.0.4~v2.0.10 全部能力保留。
+· 旧版本在 exe\历史版本\。
