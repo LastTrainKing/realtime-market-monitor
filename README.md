@@ -214,8 +214,13 @@ realtime-market-monitor/
 │   └── archive-2026-09-21/    项目原有归档文档（描述 2026-09-21 的 v1.2.5 全量归档）
 ├── flowlive-native/           原生版 v3.0.6 源码树
 │   ├── README.md
-│   └── build/                 保留原始相对路径（脚本用相对路径找 core/、data/）
-├── legacy/                    原生版历史源码快照（v1.2.5 / v2.0.1~2.0.2 过渡 / v2.0.2 / v2.0.2b）
+│   ├── build/                 主程序 + core/ + core2/ + 打包配置 + 测试（保留原相对路径）
+│   └── tools/                 部署 / 诊断 / 开机自启 / 版本探测脚本（23 个）
+├── legacy/                    原生版历史源码快照
+│   ├── v1.2.5/                PySide6 原生版 v1.2.5 源码（无 EXE）
+│   ├── v2.0.1_to_v2.0.2_transition/ · v2.0.2/ · v2.0.2b/
+│   ├── v2.0.2_core_reference/ · snapshots/
+│   └── html-dashboard-shell/  HTML 看板壳形态的 4 份文档（非 PySide6 原生版）
 ├── web-dashboard/             网页版看板
 ├── android/                   APK
 ├── command-center/            指挥中心 v1.1.0 完整源码 + 前身 v4.0.0 文档
