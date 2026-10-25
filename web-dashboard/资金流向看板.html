@@ -1,0 +1,3080 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>资金流向实时看板（单文件版）</title>
+<style>
+:root{
+  --bg:#0d1017; --bg2:#141924; --bg3:#1a2130; --line:#252d3d; --line2:#1b2230;
+  --fg:#e9edf6; --fg2:#98a1b6; --fg3:#6a7387;
+  --acc:#4f8cff; --up:#ff4d5e; --dn:#22c39a; --warn:#ffc757;
+  --chart:#0f141d; --grid:#1e2735; --zero:#39445a;
+}
+body.light{
+  --bg:#f4f6fa; --bg2:#ffffff; --bg3:#eef1f6; --line:#dde3ec; --line2:#e8edf4;
+  --fg:#121722; --fg2:#5a6478; --fg3:#8b94a6;
+  --chart:#ffffff; --grid:#eceff5; --zero:#c9d0dc;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font-size:14px;line-height:1.6;
+  font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1420px;margin:0 auto;padding:16px 20px 60px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px 18px;
+  position:sticky;top:10px;z-index:20}
+.brand{font-size:17px;font-weight:800;display:flex;align-items:center;gap:9px;letter-spacing:-.01em}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--acc)}
+.badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--line);
+  border-radius:999px;padding:4px 12px;font-size:12.5px;color:var(--fg2);white-space:nowrap}
+.badge b{color:var(--fg);font-weight:700}
+.badge.date b{color:var(--acc);font-size:14px;font-variant-numeric:tabular-nums}
+.badge.live{border-color:rgba(255,77,94,.45);color:#ffb3ba;background:rgba(255,77,94,.1)}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--up);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.65)}100%{opacity:1;transform:scale(1)}}
+.spacer{flex:1}
+button{background:var(--bg3);border:1px solid var(--line);color:var(--fg2);border-radius:9px;
+  padding:6px 13px;font-size:12.5px;cursor:pointer;font-family:inherit;transition:.15s}
+button:hover{color:var(--fg);border-color:var(--acc)}
+button.primary{background:rgba(79,140,255,.15);border-color:rgba(79,140,255,.4);color:#9dc0ff}
+.q{display:flex;align-items:baseline;gap:8px;font-variant-numeric:tabular-nums}
+.q{flex-wrap:wrap;row-gap:2px} .q .px{font-size:17px;font-weight:800} .q .chg{font-size:11.5px;font-weight:700}
+.up{color:var(--up)} .dn{color:var(--dn)} .flat{color:var(--fg3)}
+.note{margin-top:10px;font-size:12.5px;color:var(--fg3);
+  background:var(--bg2);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:0 10px 10px 0;padding:9px 14px}
+#progWrap{display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--line);
+  border-radius:10px;padding:10px 14px}
+#progBar{height:6px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-top:7px}
+#progBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),#7fb0ff);transition:width .25s}
+.panel{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-top:14px}
+.ph{display:flex;align-items:baseline;gap:11px;margin-bottom:10px;flex-wrap:wrap}
+.ph h2{font-size:15.5px;margin:0;font-weight:750}
+.ph .sub{font-size:12px;color:var(--fg3)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+@media(max-width:1080px){.grid2{grid-template-columns:1fr}}
+/* 窄屏压缩顶栏，避免「亮色 / 立即刷新」被挤到第二行 */
+@media(max-width:1460px){
+  header{gap:9px;padding:12px 14px}
+  .brand{font-size:16px}
+  .badge{padding:3px 9px;font-size:11.5px}
+  .badge.date b{font-size:13px}
+  .q .px{font-size:16px} .q .chg{font-size:11px}
+  button{padding:5px 10px;font-size:12px}
+}
+canvas{display:block;width:100%}
+/* 主力资金曲线图例：色块 + 板块名 + 累计净额。
+   曲线末端不再挂标签（右侧空间不够），统一挪到图下方自动换行铺满整行。 */
+#fanLegend{display:flex;flex-wrap:wrap;gap:9px 20px;margin-top:13px;padding-top:13px;
+  border-top:1px solid var(--line2);font-size:12.5px;line-height:1.45}
+#fanLegend .lg{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:var(--fg2)}
+#fanLegend .lg i{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+#fanLegend .lg b{color:var(--fg);font-weight:650;font-variant-numeric:tabular-nums}
+
+/* ---------- 通用「卡片列表」：替代宽表格，窄屏自动单列 ----------
+   用于「全天关键节点榜」「龙头领先反应」等原本一行塞 5~7 列的模块。
+   ★ 列宽必须写成 minmax(min(340px,100%),1fr) 而不是 minmax(340px,1fr)：
+     后者里的 340px 是**硬下限**，当容器窄于 340px（手机面板内容区只有约 332px）
+     列宽仍被强制成 340px，卡片就会撑破容器 → 右侧数字被截断且需要左右滑。
+     min(340px,100%) 让下限随容器收缩，窄屏自动退化为单列铺满。 */
+.cardList{display:grid;gap:10px;
+  grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));align-content:start}
+.cardList .card{background:var(--bg3);border:1px solid var(--line);
+  border-radius:11px;padding:11px 13px;min-width:0}
+.cardList .card .row1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cardList .card .row1 .d{color:var(--fg3);font-size:12px;
+  font-variant-numeric:tabular-nums;flex:0 0 auto}
+.cardList .card .t{font-weight:650;font-size:13.5px;color:var(--fg);
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cardList .card .num{margin-left:auto;font-weight:750;font-size:14px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.cardList .card .desc{color:var(--fg2);font-size:12.5px;line-height:1.65;
+  margin:7px 0 9px;word-break:break-word}
+.cardList .card .bar{height:3px;border-radius:2px}
+/* 卡片内的「标签 + 值」小格，放不下自动换行 */
+.cardList .card .pairs{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;
+  color:var(--fg2);margin-top:7px}
+.cardList .card .pairs .p{display:inline-flex;align-items:baseline;gap:5px;white-space:nowrap}
+.cardList .card .pairs .p em{font-style:normal;color:var(--fg3);font-size:11.5px}
+
+.knList{display:grid;gap:10px;
+  grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));align-content:start}
+.knCard{background:var(--bg3);border:1px solid var(--line);
+  border-radius:11px;padding:11px 13px;min-width:0}
+.knTop{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.knTop .d{color:var(--fg3);font-size:12px;font-variant-numeric:tabular-nums}
+.knName{font-weight:650;font-size:13.5px;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.knStr{margin-left:auto;font-weight:750;font-size:14px;color:var(--acc);
+  font-variant-numeric:tabular-nums;flex:0 0 auto}
+.knDesc{color:var(--fg2);font-size:12.5px;line-height:1.65;margin:7px 0 9px;
+  word-break:break-word}
+.knCard .bar{height:3px;border-radius:2px}
+table{width:100%;border-collapse:collapse;font-size:12.8px;table-layout:fixed}
+th{text-align:left;color:var(--fg3);font-weight:600;font-size:11px;padding:6px 7px;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:5px 7px;border-bottom:1px solid var(--line2);font-variant-numeric:tabular-nums}
+td.n{text-align:right}
+td.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 榜单表格列宽锁定：左右两张表的数值列必须落在同一 x 位置，否则两栏看起来是歪的 */
+.rankTable col.c-rk{width:26px}
+.rankTable col.c-nm{width:auto}
+.rankTable col.c-num{width:66px}
+.rankTable col.c-sal{width:58px}
+.rankTable th.rk{width:26px}
+tr:hover td{background:var(--bg3)}
+.rk{color:var(--fg3);font-size:11px}
+.bar{height:3px;border-radius:2px;margin-top:3px}
+.ev{list-style:none;padding:0;margin:0;max-height:340px;overflow:auto;
+  display:grid;grid-template-columns:1fr 1fr;gap:0 26px;align-content:start}
+.ev li:nth-last-child(2):not(:first-child){border-bottom:0}
+@media(max-width:1080px){.ev{grid-template-columns:1fr}}
+.ev li{display:flex;gap:9px;align-items:baseline;padding:7px 0;border-bottom:1px dashed var(--line2);font-size:12.8px}
+.ev li:last-child{border-bottom:0}
+.tg{flex:0 0 auto;background:rgba(79,140,255,.15);color:#9dc0ff;border-radius:5px;
+  padding:1px 7px;font-size:11px;font-weight:700}
+.tg.hot{background:rgba(255,77,94,.16);color:#ff9aa4}
+.tg.cold{background:rgba(34,195,154,.16);color:#6fd9b8}
+.ev .txt{color:var(--fg2)} .ev .txt b{color:var(--fg);font-weight:650}
+.theme{background:var(--bg3);border:1px solid var(--line);border-left-width:3px;border-radius:10px;
+  padding:9px 12px;margin-bottom:8px}
+.theme.in{border-left-color:var(--up)} .theme.out{border-left-color:var(--dn)}
+.theme .th{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+.theme .th b{font-size:13.5px} .theme .th span{font-size:11.5px;color:var(--fg3)}
+.theme .tm{margin-top:5px;font-size:11.5px;color:var(--fg2);line-height:1.9}
+/* 主线题材簇全宽一行：自适应多列平铺，避免单列过长留白 */
+#themeList{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:10px;align-content:start;max-height:420px;overflow:auto}
+#themeList .theme{margin-bottom:0}
+#themeList .placeholder{grid-column:1/-1}
+.chip{display:inline-block;background:var(--bg2);border:1px solid var(--line);border-radius:999px;
+  padding:1px 8px;margin:2px 3px 2px 0;font-size:11.5px}
+details{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:12px 18px;margin-top:14px}
+summary{cursor:pointer;font-weight:700;font-size:14px;outline:none}
+details .bd{margin-top:12px;color:var(--fg2);font-size:13px}
+details h4{margin:14px 0 5px;color:var(--fg);font-size:13.5px}
+details ul{margin:6px 0;padding-left:20px} details li{margin:3px 0}
+code{background:var(--bg3);border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+  font-family:Consolas,monospace;font-size:12px;color:#9dc0ff}
+.foot{color:var(--fg3);font-size:12px;margin-top:22px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="dot"></span>资金流向实时看板</div>
+    <div class="badges">
+      <span class="badge date">数据日期 <b id="bDate">—</b></span>
+      <span class="badge" id="bPhase">—</span>
+      <span class="badge" id="bLive">—</span>
+      <span class="badge" id="bBars">—</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="q" id="quote"></div>
+    <button id="btnLive" style="display:none">返回实时</button>
+    <button id="btnRefresh" class="primary">立即刷新</button>
+    <button id="btnTheme">亮色</button>
+  </header>
+  <div class="note" id="note">正在初始化…</div>
+  <div id="progWrap">
+    <div style="font-size:12.5px;color:var(--fg2)" id="progTxt">准备中…</div>
+    <div id="progBar"><i></i></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>主力资金曲线</h2>
+      <span class="sub">每一条线 = 一个板块（一级行业 + 概念题材一起排），从开盘原点发散；
+        下方图例列出对应的「名称 + 累计主力净额（亿元）」；
+        <span class="up">红=净流入</span> · <span class="dn">绿=净流出</span></span></div>
+    <canvas id="cFan" height="470"></canvas>
+    <div id="fanLegend"></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>板块辨识度榜</h2><span class="sub" id="boardSub">仅统计概念题材（一级行业见下方「一级行业格局」）</span></div>
+    <div class="grid2" style="margin-top:0">
+      <div><table id="tIn" class="rankTable"></table></div><div><table id="tOut" class="rankTable"></table></div>
+    </div>
+    <div class="ph" style="margin-top:18px"><h2 style="font-size:13.5px">一级行业格局</h2></div>
+    <div class="grid2" style="margin-top:0">
+      <div><table id="tIndIn" class="rankTable"></table></div><div><table id="tIndOut" class="rankTable"></table></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>实时事件</h2><span class="sub">新晋 / 加速 / 跃迁 / 持续</span>
+      <span class="sub" style="margin-left:auto" id="evSub"></span></div>
+    <ul class="ev" id="evList"><li><span class="txt">等待数据…</span></li></ul>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>主线题材簇</h2><span class="sub">市场中性化后相关聚类，同簇板块资金同向共振</span>
+      <span class="sub" style="margin-left:auto" id="thSub"></span></div>
+    <div id="themeList" style="font-size:12.5px;color:var(--fg3)">等待数据…</div>
+  </div>
+
+  <div class="panel">
+    <div class="ph">
+      <h2>全天关键节点榜</h2>
+      <span class="sub" id="knSub">逐段扫描一整天，按强度排序</span>
+    </div>
+    <div id="keynodes"></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph">
+      <h2>主角更替时间轴</h2>
+      <span class="sub" id="leaderSub">每 10 分钟一格（横向按时间等距排列），三行分别是该时刻辨识度第 1/2/3 名；底色红=净流入、绿=净流出</span>
+      <button id="btnLeaderMode" style="margin-left:auto">切换为时长视图</button>
+    </div>
+    <canvas id="cLead" height="440"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><h2>板块辨识度时间轴</h2>
+      <span class="sub">每行一个题材，气泡大小=累计净额绝对值；看某行由红转绿的时刻就是资金转向拐点</span></div>
+    <canvas id="cTime" height="520"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="ph">
+      <h2>龙头领先反应</h2>
+      <span class="sub" id="leaderStat">—</span>
+      <button id="btnLeaderRun" style="margin-left:auto">重新分析龙头</button>
+    </div>
+    <div id="leaderBoardBox"></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph">
+      <h2>阶段对比</h2>
+      <span class="sub" id="stageSub">一天切成六个时点，看每个时点辨识度最高的题材</span>
+    </div>
+    <canvas id="cStage" height="480"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="ph">
+      <h2>近 30 个交易日（滚动窗口）</h2>
+      <span class="sub" id="ttMeta"></span>
+      <button id="btnSelftest" style="margin-left:auto">运行功能自检</button>
+    </div>
+    <div id="timetable"></div>
+  </div>
+
+  <div class="panel" id="selftestPanel" style="display:none">
+    <div class="ph"><h2>功能自检</h2>
+      <span class="sub">验证「非交易日回退到最近交易日」与「滚动 30 日窗口」两条规则；每次运行都是实时计算</span></div>
+    <div id="selftestBox"></div>
+  </div>
+
+  <details>
+    <summary>数据源、字段与算法说明（点开）</summary>
+    <div class="bd">
+      <h4>0. 这是什么</h4>
+      <ul><li>单个 HTML 文件，<b>双击直接用</b>：不需要 Python、不需要装东西、不需要后台服务、不上传任何数据。
+        页面直接从东方财富公开接口取数，并缓存在浏览器本地（localStorage）。</li></ul>
+      <h4>1. 数据源与字段</h4>
+      <ul>
+        <li><b>板块清单</b> <code>/api/qt/clist/get</code>，<code>fs=m:90+t:2</code> 行业 / <code>m:90+t:3</code> 概念，
+          字段 <code>f12</code>代码 <code>f14</code>名称。</li>
+        <li><b>板块分时资金流</b> <code>/api/qt/stock/fflow/kline/get?klt=1&amp;secid=90.BKxxxx</code>，
+          <code>fields2=f51,f52,f53,f54,f55,f56</code> → f51 时间 / <b>f52 主力净流入</b> / f53 小单 / f54 中单 / f55 大单 / f56 超大单（元）。</li>
+        <li><b>实时快照</b> <code>/api/qt/clist/get</code> 的 <code>f62</code>（今日主力净流入），一次返回全部板块。</li>
+        <li><b>指数分时</b> <code>/api/qt/stock/trends2/get?secid=1.000001</code>，f51 时间 / f53 点位 / f56 量。</li>
+      </ul>
+      <h4>2. 主力资金曲线怎么来的</h4>
+      <ul><li>取 <b>f52（主力净流入 = 超大单 + 大单）的累计值时间序列</b> ——「从开盘到现在累计净流入多少亿」，
+        <b>不是每分钟增量</b>，所以是单调爬升/下行的曲线。</li>
+        <li>盘中双通道：分钟 K 线保证整条曲线形状（每 10 分钟全量回补一次）＋ <b>5 秒快照</b>（f62，与 f52 同口径）
+          覆盖「当前分钟」的值，让曲线末端持续跳动。不做任何平滑或插值。</li></ul>
+      <h4>3. 板块辨识度（salience）</h4>
+      <ul><li>体量 34% + 速度 28% + 排名跃迁 16% + 持续性 12% + 异动 z 10%，
+        全部用<b>横截面分位</b>而非绝对金额（否则体量天生大的行业桶永远霸榜）。</li></ul>
+      <h4>4. 主线聚类</h4>
+      <ul><li>先做<b>市场中性化</b>（扣掉每个时刻的横截面均值）再算相关性，否则共同因子会把 400 个板块聚成一个大簇
+        （实测出现过 123 成员、簇内平均相关仅 0.03 的假簇）。</li>
+        <li>用「以龙头为种子的贪心聚类」，不用单链聚类（单链会通过传递关系串簇）；簇名取簇内平均相关性最高者。</li></ul>
+      <h4>5. 板块宇宙清洗</h4>
+      <ul><li>剔除统计桶（融资融券、MSCI中国、沪股通、HS300、昨日涨停、破净股、机构重仓、2026中报预增…）
+        与行业层级重复项；行业只保留 31 个一级行业。这些桶覆盖大半个市场、结构性常年净流出，混进来会污染排序。</li></ul>
+      <h4>6. 交易日期与时段判定</h4>
+      <ul><li><b>让数据源自己说话</b>：指数分时接口永远返回"最近一个有数据的交易日"——
+        凌晨给昨天、开盘后给今天、周末给上周五。因此<b>不需要维护节假日日历</b>。</li>
+        <li>时段：盘前(00:00–09:14)/集合竞价(09:15–09:25)/开盘前(09:25–09:30)/早盘(09:30–11:30)/
+          午间休市(11:30–13:00)/午盘(13:00–15:00)/已收盘(15:00–24:00)。</li>
+        <li>「接口日期 == 今天」且处于交易时段 → 判定为<b>实时</b>，刷新提速到 5 秒；
+          否则 20 秒轮询并等待 09:30 自动切换。</li></ul>
+      <h4>7. 刷新频率</h4>
+      <ul><li>盘中：每 <b>5 秒</b>抓一次全市场快照；每 <b>10 分钟</b>后台回补全部板块的分钟 K 线。</li>
+        <li>非盘中：每 <b>20 秒</b>只检查日期是否切换，不做多余请求。</li></ul>
+    </div>
+  </details>
+
+  <div class="foot" id="foot">单文件版 · 数据来源：东方财富公开接口<br/>
+    <span id="diskStamp" style="font-size:11.5px"></span></div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   存储转接层（D 盘版新增，2026-09-21）
+   ---------------------------------------------------------------------
+   目标：数据必须**落在 D 盘**，而不是浏览器自己的缓存目录（C 盘）。
+
+   原理
+   -----
+   业务代码全程用 localStorage 读写（saveCache / loadCache /
+   archiveRead / archiveWrite 都直接 getItem/setItem），一行不能改。
+   这里在脚本最前面把 window.localStorage 换成一个"内存 + 后台落盘"的
+   实现：
+     · 读：同步命中内存（启动时由服务端内联注入，见 serve.py 的
+           __FLOWLIVE_DISK_SEED__），所以业务代码的同步读法照常成立；
+     · 写：先更新内存（立刻可读回），再把整批改动 debounce 后 POST 到
+           http://127.0.0.1/__store —— 由 Python 侧写成 data\ls_*.json。
+
+   为什么读要"启动时注入"而不是异步拉
+   ----------------------------------
+   业务代码是**同步**读的。若改成异步，就要把 saveCache/loadCache/
+   archiveRead 及其整条调用链改成 async，改动面极大、且极易漏掉某处
+   导致"看着有数据其实是空的"。启动前注入让时序归零风险。
+
+   降级
+   ----
+   若页面不是由 serve.py 发出的（例如有人直接双击这个 html 用 file://
+   打开），__FLOWLIVE_DISK_SEED__ 不存在 —— 那就退化成原生 localStorage，
+   页面照常可用，只是数据又回到浏览器缓存里。页脚会明确标出当前模式。
+   ===================================================================== */
+(function(){
+  const SEED = window.__FLOWLIVE_DISK_SEED__;
+  const DISK_MODE = !!(SEED && SEED.ok);
+
+  /* 页脚标注存储落点 —— 让"数据到底写在哪"可见、可核对。
+     ★ 两种模式都要标：如果不标"当前是浏览器缓存"，用户会以为历史数据
+       已经跟着 D 盘走了，实际还在 C 盘 —— 那才是最危险的误解。 */
+  function paintFoot(diskMode, n){
+    const el = document.getElementById("diskStamp");
+    if (!el) return false;
+    if (diskMode){
+      el.textContent = `存储：D 盘明文文件（已载入 ${n} 个键）· 等待首次落盘…`;
+    } else {
+      el.innerHTML = '存储：<b>浏览器缓存</b>（未通过启动器打开，数据不会写入 D 盘）'
+        + '<br/>请改用 <b>启动看板.bat</b> 打开，历史数据才会保存在 D 盘。';
+    }
+    return true;
+  }
+  function deferFoot(diskMode, n){
+    if (!paintFoot(diskMode, n)){
+      document.addEventListener("DOMContentLoaded",
+        ()=>paintFoot(diskMode, n), {once:true});
+    }
+  }
+
+  if (!DISK_MODE){
+    window.__FLOWLIVE_MODE__ = "browser";
+    deferFoot(false, 0);
+    return;
+  }
+
+  const mem = Object.create(null);
+  const src = SEED.data || {};
+  for (const k in src) mem[k] = String(src[k]);
+
+  const dirty = new Set();
+  let timer = null, sending = false;
+  let stats = { flush:0, fail:0, bytes:0, lastAt:"" };
+
+  function flush(){
+    timer = null;
+    if (sending || !dirty.size) return;
+    const set = {};
+    dirty.forEach(k=>{ set[k] = (k in mem) ? mem[k] : null; });
+    dirty.clear();
+    sending = true;
+    const body = JSON.stringify({ set });
+    try{
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/__store", true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.onloadend = ()=>{
+        sending = false;
+        if (xhr.status === 200){
+          stats.flush++; stats.bytes += body.length;
+          stats.lastAt = new Date().toLocaleTimeString("zh-CN", {hour12:false});
+          const el = document.getElementById("diskStamp");
+          if (el) el.textContent = `已落盘 D 盘 · ${stats.flush} 次 · ${stats.lastAt}`;
+        } else {
+          // 失败就把这批键重新标脏，下一轮重试 —— 不能让数据静默丢掉
+          stats.fail++;
+          for (const k in set) dirty.add(k);
+          const el = document.getElementById("diskStamp");
+          if (el) el.textContent = `落盘失败 ${stats.fail} 次，正在重试…`;
+        }
+        if (dirty.size && !timer) timer = setTimeout(flush, 1200);
+      };
+      xhr.send(body);
+    }catch(e){
+      sending = false; stats.fail++;
+      for (const k in set) dirty.add(k);
+      if (!timer) timer = setTimeout(flush, 1500);
+    }
+  }
+
+  function mark(k){ dirty.add(k); if (!timer) timer = setTimeout(flush, 300); }
+
+  const shim = {
+    getItem(k){ k = String(k); return (k in mem) ? mem[k] : null; },
+    setItem(k, v){ k = String(k); mem[k] = String(v); mark(k); },
+    removeItem(k){ k = String(k); delete mem[k]; mark(k); },
+    clear(){ for (const k in mem) delete mem[k]; dirty.add("__clear__"); },
+    key(i){ const ks = Object.keys(mem); return i < ks.length ? ks[i] : null; },
+    get length(){ return Object.keys(mem).length; },
+  };
+  try{
+    Object.defineProperty(window, "localStorage", {
+      configurable:true, get(){ return shim; }
+    });
+  }catch(e){
+    window.localStorage = shim;
+  }
+
+  window.__FLOWLIVE_MODE__ = "disk";
+  window.__FLOWLIVE_STATS__ = stats;
+  deferFoot(true, Object.keys(src).length);
+
+  // 关页前把还没落盘的追一次，尽量不丢最后一笔
+  window.addEventListener("pagehide", ()=>{
+    if (!dirty.size) return;
+    const set = {};
+    dirty.forEach(k=>{ set[k] = (k in mem) ? mem[k] : null; });
+    try{
+      navigator.sendBeacon("/__store", new Blob([JSON.stringify({set})],
+        {type:"application/json"}));
+      dirty.clear();
+    }catch(e){ /* 退浏览器缓存也没关系，下次开页面会重新拉 */ }
+  });
+})();
+
+/* =====================================================================
+   资金流向实时看板 —— 单文件版
+   所有逻辑在浏览器内完成：取数 → 清洗 → 计算 → 绘图 → 缓存
+   ===================================================================== */
+
+/* ---------------------------- 配置 ---------------------------- */
+const CFG = {
+  hosts: ["https://push2delay.eastmoney.com", "https://push2.eastmoney.com"],
+  ut: "b2884a393a59ad64002292a3e90d46a5",      // 公开固定值
+  poolKline: 8,
+  cacheKey: "flowlive_panel_v1",
+  stateKey: "flowlive_state_v1",
+};
+
+/* 一级行业白名单（东财 t:2 返回 496 个含一/二/三级嵌套，混用会重复计资金） */
+const PRIMARY_INDUSTRIES = new Set(["农林牧渔","基础化工","钢铁","有色金属","电子","汽车",
+  "家用电器","食品饮料","纺织服饰","轻工制造","医药生物","公用事业","交通运输","房地产",
+  "商贸零售","社会服务","综合","建筑材料","建筑装饰","电力设备","国防军工","计算机","传媒",
+  "通信","银行","非银金融","煤炭","石油石化","环保","美容护理","机械设备"]);
+
+/* 统计桶黑名单：覆盖大半个市场、结构性常年净流出，不剔除会霸榜 */
+const DROP_RE = [
+  /融资融券/,/沪股通/,/深股通/,/MSCI/,/富时罗素/,/标准普尔/,/^AH股$/,/^GDR$/,/^AB股$/,/^B股$/,
+  /HS300/,/^上证/,/^深证/,/^深成/,/^中证/,/创业板综/,/^央视/,/^科创\d/,/^北证/,
+  /^20\d\d(一季报|中报|三季报|年报)/,/昨日/,/连板/,/涨停/,/炸板/,/触板/,/首板/,/高换手/,/高振幅/,
+  /新高/,/破净/,/破发/,/超跌/,/反转股/,/趋势股/,/最近多板/,/摘帽/,
+  /微盘/,/小盘/,/大盘/,/中盘/,/价值股/,/成长股/,/红利/,/权重股/,/低价股/,/百元股/,/微利股/,
+  /高市净率/,/低市净率/,/风格$/,/茅指数/,/宁组合/,/行业龙头/,/专精特新/,/东方财富热股/,
+  /超级品牌/,/稀缺资源/,/^中字头$/,/^ST股$/,/次新股/,
+  /机构重仓/,/基金重仓/,/QFII/,/社保重仓/,/证金持股/,/养老金/,/北向/,/举牌/,
+  /股权集中/,/股权分散/,/股权激励/,/股权转让/,/密集调研/,/券商金股/,/转债标的/,/IPO受益/,
+  /独角兽/,/^创投$/,/参股(银行|券商|保险|期货|新三板)/,
+];
+function isBucket(n){ return DROP_RE.some(r=>r.test(n)); }
+function keepSector(name, kind){
+  if (kind === "concept") return !isBucket(name);
+  if (kind === "industry") return PRIMARY_INDUSTRIES.has(name);
+  return false;
+}
+
+/* ---------------------------- 全局状态 ---------------------------- */
+const ST = {
+  date:null, phaseKey:"pre_open", phaseLabel:"盘前", live:false, pollMs:20000,
+  axis:[], axisIdx:Object.create(null),
+  names:Object.create(null), kinds:Object.create(null), values:Object.create(null),
+  okCodes:new Set(),
+  index:[], quote:{}, quote2:{}, lastUpdate:"", version:0, ready:false,
+  lastFull:0, busy:false, note:"",
+  mode:"live", histDate:null, histRec:null, kind:null, lastBar:null,
+};
+const $ = id => document.getElementById(id);
+const fmt = (v,d=2) => (v===null||v===undefined||isNaN(v)) ? "—" : Number(v).toFixed(d);
+const sign = v => v>0 ? "up" : (v<0 ? "dn" : "flat");
+const sgn = v => (v>0?"+":"") + fmt(v);
+const nowHM = () => { const d=new Date(); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); };
+const todayStr = () => { const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+
+function progress(pct, text){
+  const w = $("progWrap");
+  if (pct === null){ w.style.display="none"; return; }
+  w.style.display = "block";
+  $("progBar").firstElementChild.style.width = Math.round(pct*100)+"%";
+  if (text) $("progTxt").textContent = text;
+}
+
+/* ---------------------------- 网络层（多域名故障转移） ---------------------------- */
+let hostOrder = CFG.hosts.slice();
+/* 主角更替时间轴视图：
+   grid  = 每 10 分钟一格（默认；时间轴按时间等距排列，可精确核对某一时刻谁是主角）
+   lanes = 按时长等比的泳道图（点击切换；一眼看出谁主导了多久） */
+let LEADER_MODE = "grid";
+async function q(path, timeoutMs=15000){
+  let lastErr = null;
+  for (let attempt=0; attempt<3; attempt++){
+    for (const h of hostOrder){
+      let timerId = null;
+      try{
+        const ctl = new AbortController();
+        timerId = setTimeout(()=>ctl.abort(), timeoutMs);
+        const r = await fetch(h + path, {signal: ctl.signal, cache:"no-store"});
+        clearTimeout(timerId); timerId = null;
+        if (!r.ok) { lastErr = new Error("HTTP "+r.status); continue; }
+        const txt = await r.text();
+        if (!txt) { lastErr = new Error("empty"); continue; }
+        const j = JSON.parse(txt);
+        if (hostOrder[0] !== h){ hostOrder = [h, ...hostOrder.filter(x=>x!==h)]; }
+        return j;
+      }catch(e){ lastErr = e; }
+      // ★ 无论走哪条路径都要清掉超时定时器，否则失败重试时每轮都会
+      //   留一个 15 秒后才触发的定时器（连续失败会短暂堆积，且 abort 会误伤后续请求）。
+      finally{ if (timerId !== null) clearTimeout(timerId); }
+    }
+    await new Promise(r=>setTimeout(r, 250*(attempt+1)));
+  }
+  throw lastErr || new Error("fetch failed: " + path);
+}
+
+/* 并发池 */
+async function poolMap(items, worker, limit, onProgress){
+  let i = 0, done = 0;
+  const out = new Array(items.length);
+  async function run(){
+    while (i < items.length){
+      const k = i++;
+      try { out[k] = await worker(items[k], k); } catch(e){ out[k] = null; }
+      done++;
+      if (onProgress && (done % 25 === 0 || done === items.length)) onProgress(done, items.length);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, run));
+  return out;
+}
+
+/* ---------------------------- 数据抓取 ---------------------------- */
+async function fetchIndexTrend(){
+  const j = await q(`/api/qt/stock/trends2/get?secid=1.000001&fields1=f1,f2,f3,f7&fields2=f51,f53,f56&iscr=0&ndays=1&ut=${CFG.ut}`);
+  const tr = (j && j.data && j.data.trends) || [];
+  return tr.map(s=>{ const p=s.split(","); return {date:p[0].slice(0,10), hm:p[0].slice(-5), px:+p[1], vol:+p[2]}; });
+}
+/* 顶栏展示的指数：上证指数 + 东方财富全A（后者覆盖沪深全市场，比只看上交所更全面）。
+   注：东方财富全A 的 secid 是 47.800000；「A股平均股价」是 47.800005，需要时可加进这个数组。 */
+const HEADER_INDEXES = [
+  { secid: "1.000001",  label: "上证指数" },
+  { secid: "47.800000", label: "东财全A" },
+];
+async function fetchIndexQuote(secid){
+  const j = await q(`/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f60,f170,f169&ut=${CFG.ut}&fltt=2`);
+  return (j && j.data) || {};
+}
+async function fetchQuotes(){
+  const res = await Promise.all(HEADER_INDEXES.map(async x => {
+    try { return await fetchIndexQuote(x.secid); } catch(e){ return {}; }
+  }));
+  ST.quote = res[0] || {};
+  ST.quote2 = res[1] || {};
+  return res;
+}
+async function fetchSectorList(){
+  const out = [];
+  for (const [kind, fs] of [["industry","m:90+t:2"],["concept","m:90+t:3"]]){
+    for (let pn=1; pn<=12; pn++){
+      const j = await q(`/api/qt/clist/get?pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=${fs}&fields=f12,f14,f62`);
+      const d = (j && j.data && j.data.diff) || [];
+      if (!d.length) break;
+      for (const it of d){
+        if (it.f12 && it.f14 && keepSector(it.f14, kind)) out.push({code:it.f12, name:it.f14, kind});
+      }
+      if (d.length < 100) break;
+    }
+  }
+  return out;
+}
+async function fetchKline(code){
+  const j = await q(`/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid=90.${code}&fields1=f1,f2,f3,f7&fields2=f51,f52&ut=${CFG.ut}`);
+  const kl = (j && j.data && j.data.klines) || [];
+  const rows = [];
+  for (const s of kl){ const p=s.split(","); if (p.length>=2) rows.push([p[0].slice(-5), +p[1]/1e8]); }
+  return rows;
+}
+async function fetchSnapshot(){
+  const snap = Object.create(null);
+  for (const [kind, fs] of [["industry","m:90+t:2"],["concept","m:90+t:3"]]){
+    for (let pn=1; pn<=8; pn++){
+      const j = await q(`/api/qt/clist/get?pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=${fs}&fields=f12,f14,f62`);
+      const d = (j && j.data && j.data.diff) || [];
+      if (!d.length) break;
+      for (const it of d){
+        if (it.f12 && typeof it.f62 === "number" && keepSector(it.f14, kind))
+          snap[it.f12] = [it.f14, it.f62/1e8, kind];
+      }
+      if (d.length < 100) break;
+    }
+  }
+  return snap;
+}
+
+/* ---------------------------- 面板维护 ---------------------------- */
+function ensureAxis(hms){
+  const fresh = hms.filter(h => !(h in ST.axisIdx));
+  if (!fresh.length) return;
+  const all = new Set(ST.axis); fresh.forEach(h=>all.add(h));
+  const merged = Array.from(all).sort();
+  const order = new Map(merged.map((h,i)=>[h,i]));
+  const newVals = Object.create(null);
+  for (const code in ST.values){
+    const old = ST.values[code], last = old.length ? old[old.length-1] : 0;
+    const grown = new Array(merged.length).fill(last);
+    for (let i=0;i<ST.axis.length;i++) grown[order.get(ST.axis[i])] = old[i];
+    newVals[code] = grown;
+  }
+  const grownOK = null;   // 预留
+  ST.axis = merged;
+  ST.axisIdx = Object.create(null); merged.forEach((h,i)=>ST.axisIdx[h]=i);
+  ST.values = newVals;
+}
+function applyKline(rowsByCode, meta){
+  const hms = [];
+  for (const c in rowsByCode){ const r = rowsByCode[c]; if (r) for (const x of r) hms.push(x[0]); }
+  if (hms.length) ensureAxis(Array.from(new Set(hms)));
+  for (const c in rowsByCode){
+    const rows = rowsByCode[c]; if (!rows || !rows.length) continue;
+    const m = meta[c]; if (m){ ST.names[c]=m[0]; ST.kinds[c]=m[1]; }
+    // ★ 新曲线用「第一个有效值」占位，而不是 0。
+    //   用 0 占位时，只要某次 K 线比时间轴少一分钟，那个槽位就残留 0，
+    //   画出来就是一条垂直断崖（实测先进封装 +59 亿 → 0，跳变 -58.34 亿）。
+    if (!ST.values[c]) ST.values[c] = new Array(ST.axis.length).fill(rows[0][1]);
+    const arr = ST.values[c];
+    const touched = new Set();
+    for (const [hm,v] of rows){
+      const i = ST.axisIdx[hm];
+      if (i !== undefined){ arr[i] = v; touched.add(i); }
+    }
+    // 未被本次 K 线覆盖的槽位：用最近的有效值补齐（段前回填 + 段后前向填充）
+    if (touched.size){
+      let first = -1;
+      for (let i=0;i<arr.length;i++) if (touched.has(i)){ first = i; break; }
+      if (first > 0) for (let i=0;i<first;i++) arr[i] = arr[first];
+      let lastV = arr[first];
+      for (let i=first;i<arr.length;i++){
+        if (touched.has(i)) lastV = arr[i];
+        else arr[i] = lastV;
+      }
+    }
+    ST.okCodes.add(c);
+  }
+  ST.version++;
+}
+/* ---------------------------------------------------------------------
+   快照逐板块「确认后接受」过滤
+   ---------------------------------------------------------------------
+   实测数据源会间歇性返回滞后值，同一板块在"实时值 / 滞后值"之间交替。
+   这里不直接写入，而是：
+     · 变化在阈值内            → 直接接受
+     · 超阈值                  → 先挂起，等下一轮确认
+         - 下一轮回到同一水平   → 判定为真变化，接受
+         - 连着 3 轮都在新水平  → 判定为真变化，接受
+         - 下一轮跳回原位       → 判定为滞后抖动，丢弃
+   这样既不丢真实趋势，也不会把抖动写进曲线。
+   --------------------------------------------------------------------- */
+function acceptSnapshotValue(code, v){
+  const prev = ST.snapPrev ? ST.snapPrev[code] : undefined;
+  if (prev === undefined){ ST.pending[code] = null; return true; }
+  const d = v - prev;
+  if (Math.abs(d) <= CLEAN_CFG.liveJumpYi){ ST.pending[code] = null; return true; }
+  const p = ST.pending[code];
+  if (p && Math.abs(v - p.v) <= Math.max(1, Math.abs(d) * 0.35)){
+    ST.pending[code] = null;                      // 新水平被确认
+    return true;
+  }
+  if (p) p.n = (p.n || 1) + 1; else ST.pending[code] = { v, n:1 };
+  if (ST.pending[code] && ST.pending[code].n >= 3){
+    ST.pending[code] = null;                      // 连读 3 轮都在新水平 → 真变化
+    return true;
+  }
+  return false;                                   // 本轮丢弃，保留上一轮值
+}
+
+function currentHM(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+}
+
+function applySnapshot(snap){
+  if (!ST.axis.length) return;
+  const nowHM = currentHM();
+
+  // ① 滞后护栏：若本轮快照里绝大多数板块同时朝同一方向大幅回退，
+  //    说明数据源返回了滞后分片，整轮丢弃（保留上一轮值），避免曲线来回抽动。
+  if (snapshotIsStale(snap, nowHM)){
+    ST.version++;
+    renderCleanPanel();
+    return;
+  }
+
+  // ② 让时间轴始终跟到"当前分钟"——否则快照会把"当前值"写进"上一分钟的槽位"，
+  //    等轴一延长，这段错误水平就会被前向填充成平台，再被真实值截断成台阶。
+  axisEnsureTo(nowHM);
+  const idx = (nowHM in ST.axisIdx) ? ST.axisIdx[nowHM] : ST.axis.length - 1;
+  if (!ST.pending) ST.pending = Object.create(null);
+  let held = 0;
+
+  for (const c in snap){
+    const [name, v, kind] = snap[c];
+    if (!keepSector(name, kind)) continue;
+    ST.names[c]=name; ST.kinds[c]=kind;
+    // ★ 确认后接受：超阈值的突变先挂起，避免数据源的滞后抖动被写进曲线
+    if (CLEAN_CFG.enabled && CLEAN_CFG.guardStale && !acceptSnapshotValue(c, v)){
+      held++;
+      const pv = ST.snapPrev ? ST.snapPrev[c] : undefined;
+      if (pv !== undefined && Math.abs(v - pv) > Math.abs(CLEAN_STATS.maxHeldJump || 0)){
+        CLEAN_STATS.maxHeldJump = v - pv;
+        CLEAN_STATS.maxHeldName = name;
+        CLEAN_STATS.maxHeldAt = nowHM;
+      }
+      continue;
+    }
+    if (!ST.values[c]){
+      // 快照里有、但还没拉到分时历史的板块：用当前值填充历史（画成一条水平线），
+      // 避免出现"从 0 突然竖起来"的假曲线；下一次全量回补时会被真实历史覆盖。
+      ST.values[c] = new Array(ST.axis.length).fill(v);
+      ST.okCodes.add(c);
+    } else if (ST.values[c].length !== ST.axis.length){
+      const a = ST.values[c], lastV = a.length ? a[a.length-1] : v;
+      while (a.length < ST.axis.length) a.push(lastV);
+      if (a.length > ST.axis.length) a.length = ST.axis.length;
+    }
+    ST.values[c][idx] = v;
+  }
+  snapshotCommit(snap);
+  if (held){
+    CLEAN_STATS.heldValues = (CLEAN_STATS.heldValues||0) + held;
+    if (held > 8){
+      CLEAN_STATS.rejectedSnapshots++;
+      cleanLogPush({ time: nowHM, code:"—", name:"【整轮快照】", jump: held,
+        kind:"快照滞后抖动",
+        action:`本轮有 ${held} 个板块的突变未通过确认（疑似滞后值），已保留上一轮值`,
+        before:"—", after:"—" });
+    }
+  }
+  CLEAN_STATS.washKey = "";        // 数据变了 → 下次渲染重新清洗
+  ST.version++;
+}
+
+/* ---------------------------- 指标计算 ---------------------------- */
+function pctRank(arr){
+  const n = arr.length, idx = arr.map((v,i)=>i);
+  idx.sort((a,b)=>arr[a]-arr[b]);
+  const out = new Float64Array(n);
+  for (let p=0;p<n;p++) out[idx[p]] = n>1 ? p/(n-1) : 0;
+  return out;
+}
+function rankOf(vals){
+  const idx = vals.map((v,i)=>i);
+  idx.sort((a,b)=>vals[b]-vals[a]);
+  const out = new Int32Array(vals.length);
+  for (let p=0;p<idx.length;p++) out[idx[p]] = p+1;
+  return out;
+}
+/* 安全取某个板块在第 idx 个时间槽上的值。
+   曲线比时间轴短的情况真实存在（快照先建了短数组、K 线还没补齐、
+   历史回看时归档只保留了部分曲线），直接下标会拿到 undefined，
+   再参与算术就变成 NaN，最终在 toFixed 上抛错并中断整个 render。
+   这里统一退到"该曲线最后一个有效值"，保证与绘图用的前向填充口径一致。 */
+function valAt(code, idx){
+  const a = ST.values[code];
+  if (!a || !a.length) return 0;
+  if (idx < a.length){
+    const v = a[idx];
+    return (typeof v === "number" && isFinite(v)) ? v : (a[a.length-1] || 0);
+  }
+  const last = a[a.length-1];
+  return (typeof last === "number" && isFinite(last)) ? last : 0;
+}
+/* 曲线长度是否与当前时间轴一致（用于判断能否参与按位扫描的算法） */
+function aligned(code){
+  const a = ST.values[code];
+  return !!a && a.length === ST.axis.length;
+}
+function analyze(codes, i, velWin=5, jumpWin=10, persistWin=20, topk=20){
+  const cur=[], d5=[], j1=Math.max(0,i-jumpWin), j0=Math.max(0,i-velWin);
+  for (const c of codes){
+    cur.push(valAt(c, i)); d5.push(valAt(c, i) - valAt(c, j0));
+  }
+  const pAbs = pctRank(cur.map(Math.abs));
+  const pVel = pctRank(d5.map(Math.abs));
+  const rankNow = rankOf(cur);
+  const vPrev10 = codes.map(c=>valAt(c, j1));              // 10 分钟前的净额（判"翻多/翻空"用）
+  const rankPrev = rankOf(vPrev10);
+  const jump = new Array(codes.length);
+  for (let k=0;k<codes.length;k++) jump[k] = rankPrev[k]-rankNow[k];
+  const pJump = pctRank(jump);
+  // 持续性：近 persistWin 分钟进入过 TopK（净流入或净流出）
+  const persist = new Int32Array(codes.length);
+  const lo = Math.max(0, i-persistWin+1);
+  const m = codes.length;
+  for (let t=lo;t<=i;t++){
+    const vals = new Array(m);
+    for (let k=0;k<m;k++) vals[k] = valAt(codes[k], t);
+    const rk = rankOf(vals);
+    for (let k=0;k<m;k++) if (rk[k] <= topk || rk[k] > m-topk) persist[k]++;
+  }
+  // 异动 z
+  let mu=0; for (const v of d5) mu += v; mu/=d5.length;
+  let va=0; for (const v of d5) va += (v-mu)*(v-mu); va = va/Math.max(1,d5.length-1);
+  const sd = Math.sqrt(va) || 1e-9;
+
+  const rows = new Array(codes.length);
+  for (let k=0;k<codes.length;k++){
+    const c = codes[k];
+    const sal = 0.34*pAbs[k] + 0.28*pVel[k] + 0.16*pJump[k]
+              + 0.12*(persist[k]/persistWin) + 0.10*Math.min(Math.max(((d5[k]-mu)/sd)/3,0),1);
+    rows[k] = { code:c, name:ST.names[c], kind:ST.kinds[c],
+      net:+cur[k].toFixed(2), d5:+d5[k].toFixed(2), rank:rankNow[k],
+      jump10:rankPrev[k]-rankNow[k], z:+(((d5[k]-mu)/sd)).toFixed(2),
+      prev10:+vPrev10[k].toFixed(2), pabs:pAbs[k],
+      persist:persist[k], salience:+sal.toFixed(3) };
+  }
+  return rows;
+}
+
+function detectEvents(rows, limit=12, i=null){
+  const cs = rows.filter(r=>r.kind==="concept");
+  const byMove = cs.slice().sort((a,b)=>Math.abs(b.d5)-Math.abs(a.d5));
+  const d5cut = byMove.length>4 ? Math.abs(byMove[4].d5) : 0;
+  // 指数近 5 分钟变动（用于"与指数背离"类事件：逆向吸筹 / 借涨出货）
+  // 注意 ST.index 里的元素是对象 {hm, px, vol}，必须取 .px，不能按数组下标取。
+  // 另外指数分时比板块多一个点（09:30 起 vs 09:31 起），长度差 1 时要整体后移一位对齐。
+  let idxMove = null;
+  if (i !== null && ST.index && ST.index.length > 6){
+    const off = (ST.index.length === ST.axis.length + 1) ? 1 : 0;
+    const q = Math.min(ST.index.length - 1, i + off);
+    const p0 = Math.max(0, q - 5);
+    const a = ST.index[q].px, b = ST.index[p0].px;
+    if (typeof a === "number" && typeof b === "number" && !isNaN(a) && !isNaN(b))
+      idxMove = a - b;
+  }
+  const ev = [];
+  for (const r of cs){
+    const {name,net,d5,salience,z}=r;
+    if (Math.abs(net)<0.8 && Math.abs(d5)<0.5) continue;
+    if (r.rank<=10 && r.jump10>=8)
+      ev.push(["新晋",name,`资金排名升至第 ${r.rank} 位，净额 ${sgn(net)} 亿`,Math.abs(net)*(1+salience)*1.15]);
+    if (Math.abs(z)>=1.8 && Math.abs(d5)>=Math.max(1.0,d5cut*0.8))
+      ev.push([d5>0?"加速流入":"加速流出",name,
+        `近 5 分钟 ${sgn(d5)} 亿（当日 ${sgn(net)} 亿），z=${z}`,Math.abs(d5)*1.5]);
+    if (r.jump10>=20 && Math.abs(net)>=0.8)
+      ev.push(["排名跃迁",name,`10 分钟内排名提升 ${r.jump10} 位，净额 ${sgn(net)} 亿`,r.jump10*0.3]);
+    if (r.persist>=18 && Math.abs(net)>=5 && Math.abs(d5)>=d5cut*0.5)
+      ev.push([net>0?"持续强势":"持续失血",name,
+        `近 20 分钟持续在榜，累计 ${sgn(net)} 亿，近 5 分钟 ${sgn(d5)} 亿`,Math.abs(net)*0.75]);
+    // —— 以下三条与第一版报告口径对齐 ——
+    if (r.prev10 !== undefined){
+      if (net > 0.5 && r.prev10 < 0 && d5 > 0)
+        ev.push(["资金回流",name,`由 ${sgn(r.prev10)} 亿翻多至 ${sgn(net)} 亿`,Math.abs(net)*1.5]);
+      if (net < -0.5 && r.prev10 > 0 && d5 < 0)
+        ev.push(["资金撤离",name,`由 ${sgn(r.prev10)} 亿转为 ${sgn(net)} 亿`,Math.abs(net)*1.4]);
+    }
+    if (idxMove !== null && r.pabs >= 0.90){
+      if (net > 1 && idxMove < -3)
+        ev.push(["逆向吸筹",name,`指数 ${sgn(idxMove)} 点下跌中净流入 ${sgn(net)} 亿`,Math.abs(net)*1.2]);
+      if (net < -1 && idxMove > 3)
+        ev.push(["借涨出货",name,`指数 ${sgn(idxMove)} 点上涨中净流出 ${sgn(net)} 亿`,Math.abs(net)*1.2]);
+    }
+  }
+  const best = new Map();
+  for (const e of ev){ const k=e[1]; if(!best.has(k)||best.get(k)[3]<e[3]) best.set(k,e); }
+  const seq = Array.from(best.values()).sort((a,b)=>b[3]-a[3]);
+  const out=[]; let np=0;
+  for (const e of seq){
+    if (e[0].startsWith("持续")){ if (np>=2) continue; np++; }
+    out.push({type:e[0],name:e[1],desc:e[2],strength:+e[3].toFixed(2)});
+    if (out.length>=limit) break;
+  }
+  return out;
+}
+
+function clusterThemes(rows, i, corrTh=0.5, lookback=60, maxCand=80, maxSize=20){
+  // 相关性要在同一时间尺度上算，只保留与时间轴对齐的曲线
+  const cs = rows.filter(r=>r.kind==="concept" && aligned(r.code))
+                 .sort((a,b)=>Math.abs(b.net)-Math.abs(a.net)).slice(0,maxCand);
+  if (cs.length<4) return [];
+  const lo = Math.max(1, i-lookback);
+  const L = i-lo+1;
+  if (L<8) return [];
+  const by = new Map(cs.map(r=>[r.code,r]));
+  const vec = new Map();
+  const means = new Float64Array(L);
+  for (const r of cs){
+    const a = ST.values[r.code], v = new Float64Array(L);
+    for (let t=0;t<L;t++){ const idx=lo+t; v[t] = a[idx]-a[idx-1]; means[t]+=v[t]; }
+    vec.set(r.code, v);
+  }
+  for (let t=0;t<L;t++) means[t]/=cs.length;
+  const nrm = new Map();
+  for (const r of cs){
+    const v = vec.get(r.code); let mu=0;
+    for (let t=0;t<L;t++){ v[t]-=means[t]; mu+=v[t]; }
+    mu/=L; let va=0; for (let t=0;t<L;t++) va+=(v[t]-mu)*(v[t]-mu);
+    nrm.set(r.code, Math.sqrt(va/Math.max(1,L-1)) || 1e-9);
+  }
+  const corr = (a,b)=>{
+    const va=vec.get(a), vb=vec.get(b); let ma=0,mb=0;
+    for (let t=0;t<L;t++){ma+=va[t];mb+=vb[t];} ma/=L; mb/=L;
+    let s=0; for (let t=0;t<L;t++) s+=(va[t]-ma)*(vb[t]-mb);
+    return s/(nrm.get(a)*nrm.get(b)*Math.max(1,L-1));
+  };
+  const used = new Set(), out=[];
+  for (const seed of cs){
+    if (used.has(seed.code)) continue;
+    const members=[seed.code];
+    for (const o of cs){
+      if (o.code===seed.code || used.has(o.code)) continue;
+      if (corr(seed.code,o.code)>=corrTh){ members.push(o.code); if (members.length>=maxSize) break; }
+    }
+    members.forEach(c=>used.add(c));
+    if (members.length<2) continue;
+    let total=0; for (const c of members) total += by.get(c).net;
+    let core = seed.code;
+    if (members.length>1){
+      let bestC=-2;
+      for (const a of members){ let s=0,n=0; for (const b of members){ if(a!==b){s+=corr(a,b);n++;} }
+        const c = s/Math.max(1,n); if (c>bestC){bestC=c; core=a;} }
+    }
+    const show = members.slice().sort((a,b)=>Math.abs(by.get(b).net)-Math.abs(by.get(a).net)).slice(0,8);
+    out.push({ core:ST.names[core], n:members.length, total:+total.toFixed(2),
+      direction: total>0?"流入":"流出",
+      members: show.map(c=>({name:ST.names[c], net:by.get(c).net})) });
+  }
+  out.sort((a,b)=>Math.abs(b.total)-Math.abs(a.total));
+  return out.slice(0,6);
+}
+
+function buildFan(rows, i, topn){
+  // 窄屏减到 10 条：20 条在手机上必然糊成一片
+  if (topn === undefined) topn = (window.innerWidth < 820) ? 10 : 20;
+  // 只让"曲线长度与时间轴一致"的板块参与，否则 slice(0,i+1) 拿不到 i+1 个点，
+  // 折线会比 x 轴短一截、末端标签也会缩到中间（图上看着像线没画完）。
+  const codes = rows.map(r=>r.code).filter(aligned);
+  if (codes.length < 2) return { axis: ST.axis.slice(0, i+1), items: [] };
+  const ranked = codes.slice().sort((a,b)=>valAt(b,i)-valAt(a,i));
+  const k = Math.max(1, Math.floor(topn/2));
+  const picks = ranked.slice(0,k).concat(ranked.slice(-k)).filter((c,idx,arr)=>arr.indexOf(c)===idx);
+  return {
+    axis: ST.axis.slice(0, i+1),
+    items: picks.map(c=>({code:c, name:ST.names[c], kind:ST.kinds[c],
+      net:+valAt(c,i).toFixed(2), dir: valAt(c,i)>=0?"in":"out",
+      values: ST.values[c].slice(0,i+1) })),
+  };
+}
+function buildTimelineSeries(rows, i, topn=18){
+  const codes = rows.map(r=>r.code).filter(aligned);
+  if (!codes.length) return { axis: ST.axis.slice(0,i+1), items: [] };
+  const peak = new Map(codes.map(c=>{
+    let m=0; const a=ST.values[c]; for (let t=0;t<=i;t++){ const v=Math.abs(a[t]); if(v>m)m=v; }
+    return [c,m];
+  }));
+  const picks = codes.slice().sort((a,b)=>peak.get(b)-peak.get(a)).slice(0,topn);
+  return { axis: ST.axis.slice(0,i+1),
+    items: picks.map(c=>({name:ST.names[c], peak:+peak.get(c).toFixed(2),
+      values: ST.values[c].slice(0,i+1) })) };
+}
+function buildLeaders(i, step=10, ranks=3){
+  const codes = Array.from(ST.okCodes).filter(aligned);
+  if (codes.length<4) return [];
+  const out=[];
+  for (let t=11; t<=i; t+=step){
+    const j0 = Math.max(0, t-5);
+    const cur = codes.map(c=>valAt(c,t));
+    const d5 = codes.map(c=>Math.abs(valAt(c,t)-valAt(c,j0)));
+    const pA = pctRank(cur.map(Math.abs)), pV = pctRank(d5);
+    const sc = codes.map((c,k)=>0.6*pA[k]+0.4*pV[k]);
+    const order = sc.map((v,k)=>k).sort((a,b)=>sc[b]-sc[a]).slice(0,ranks);
+    out.push({ idx:t, time: ST.axis[t],
+               top: order.map(k=>({name:ST.names[codes[k]], net:+cur[k].toFixed(2)})) });
+  }
+  return out;
+}
+
+/* 按可用宽度截断文字，避免格子里的中文互相压住 */
+function fitText(ctx, text, maxW){
+  if (maxW <= 8) return "";
+  if (ctx.measureText(text).width <= maxW) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(t + "…").width > maxW) t = t.slice(0, -1);
+  return t + "…";
+}
+
+/* ---------------------------- 会话判定 ---------------------------- */
+/* 时段表：区间左闭右开。
+   ★ 必须首尾相接、不留空隙——phaseOf 找不到归属时会 fallback 到「已收盘」，
+     而「已收盘」在 maybeArchive 里等价于"数据已定稿"，会触发归档。
+     原先 09:14 这一分钟落在盘前区间之外（0,0 → 9,14 是右开），
+     若恰好在该分钟打开页面且数据源已返回当日日期，就会把只拉了极少分钟点的
+     盘中数据当成收盘数据写进归档。末尾的 23:59 同理，补 24,0 兜住。 */
+const PHASES = [
+  ["pre_open","盘前",0,0,9,15],["call_auction","集合竞价",9,15,9,25],
+  ["pre_open2","开盘前",9,25,9,30],["morning","早盘",9,30,11,30],
+  ["lunch","午间休市",11,30,13,0],["afternoon","午盘",13,0,15,0],
+  ["closed","已收盘",15,0,24,0],
+];
+function phaseOf(d){
+  const hm = d.getHours()*60 + d.getMinutes();
+  for (const [k,label,a,b,c,e] of PHASES){
+    if (a*60+b <= hm && hm < c*60+e) return [k,label];
+  }
+  return ["closed","已收盘"];
+}
+/* ---------------------------- 会话判定（可测试版） ----------------------------
+   把"展示哪一天 / 是否实时"抽成纯函数 sessionPure(now, apiDate)，
+   以便在自检里注入任意时刻（例如周六）来验证非交易日回退逻辑。
+   规则：展示日期 = 数据源（指数分时接口）返回的"最近一个有数据的交易日"，
+        它天然指向 周五 / 节前最后一个交易日，所以不需要维护节假日日历。 */
+function todayStrOf(now){
+  return now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
+}
+function fmtDateTime(d){
+  const p = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function sessionPure(now, apiDate){
+  const [phaseKey, phaseLabel] = phaseOf(now);
+  const pre = ["pre_open","call_auction","pre_open2"].includes(phaseKey);
+  if (!apiDate){                                  // 网络异常兜底：退到上一个工作日
+    const d = new Date(now);
+    if (pre || d.getDay()===0 || d.getDay()===6){
+      d.setDate(d.getDate()-1);
+      while (d.getDay()===0 || d.getDay()===6) d.setDate(d.getDate()-1);
+    }
+    apiDate = todayStrOf(d);
+  }
+  const today = todayStrOf(now);
+  const live = apiDate===today && ["call_auction","pre_open2","morning","afternoon"].includes(phaseKey);
+  let note, kind;
+  if (live){
+    kind = "live";
+    note = `盘中实时，正在接收 ${apiDate} 的分时数据（每 5 秒刷新快照）`;
+  } else if (apiDate===today && phaseKey==="lunch"){
+    kind = "lunch";
+    note = `午间休市，展示 ${apiDate} 上午数据；13:00 恢复实时刷新`;
+  } else if (apiDate===today){
+    kind = "closed";
+    note = `今日 ${apiDate} 已收盘，展示全天完整数据`;
+  } else if (pre){
+    kind = "preopen";
+    note = `未开盘，展示最近交易日 ${apiDate} 的收盘数据；09:30 开盘后自动切换到今日`;
+  } else {
+    kind = "nontrading";
+    note = `非交易日（今日不交易），展示最近交易日 ${apiDate} 的收盘数据`;
+  }
+  return { date:apiDate, apiDate, isToday: apiDate===today, phaseKey, phaseLabel,
+           live, lastBar: ST.lastBar, note, kind, pollMs: live ? 5000 : 20000,
+           serverTime: fmtDateTime(now) };
+}
+
+async function resolveSession(nowOverride, apiDateOverride){
+  const now = nowOverride || new Date();
+  let apiDate = apiDateOverride;
+  if (apiDate === undefined){
+    try{
+      const tr = await fetchIndexTrend();
+      if (tr.length){ apiDate = tr[0].date; ST.lastBar = tr[tr.length-1].hm; ST.index = tr; }
+    }catch(e){ /* 网络异常走兜底 */ }
+  }
+  const s = sessionPure(now, apiDate);
+  Object.assign(ST, { date:s.date, isToday:s.isToday, phaseKey:s.phaseKey,
+                      phaseLabel:s.phaseLabel, live:s.live, note:s.note,
+                      kind:s.kind, pollMs:s.pollMs });
+  try{ localStorage.setItem(CFG.stateKey, JSON.stringify({date:s.date, live:s.live, ts:Date.now()})); }catch(e){}
+  return s;
+}
+
+/* ---------------------------- 缓存 ---------------------------- */
+function saveCache(){
+  try{
+    const codes = Array.from(ST.okCodes);
+    const values = {}; const names = {}; const kinds = {};
+    for (const c of codes){
+      let peak=0; const a=ST.values[c];
+      for (let i=0;i<a.length;i++){ const v=Math.abs(a[i]); if(v>peak)peak=v; }
+      if (peak < 0.05) continue;                       // 丢掉无意义的噪声板块，控制体积
+      names[c]=ST.names[c]; kinds[c]=ST.kinds[c];
+      values[c]=a.map(v=>+v.toFixed(2)).join(",");
+    }
+    const payload = { v:1, date:ST.date, axis:ST.axis, names, kinds, values,
+      index:ST.index.map(r=>[r.hm,r.px]), quote:ST.quote, ts:Date.now() };
+    const s = JSON.stringify(payload);
+    if (s.length > 4.2e6) return false;                // 超出配额就别存
+    localStorage.removeItem(CFG.cacheKey);
+    localStorage.setItem(CFG.cacheKey, s);
+    return true;
+  }catch(e){ return false; }
+}
+function loadCache(date){
+  try{
+    const raw = localStorage.getItem(CFG.cacheKey);
+    if (!raw) return false;
+    const p = JSON.parse(raw);
+    if (!p || p.date !== date || !p.axis || !p.axis.length) return false;
+    ST.axis = p.axis;
+    ST.axisIdx = Object.create(null); ST.axis.forEach((h,i)=>ST.axisIdx[h]=i);
+    ST.names = Object.assign(Object.create(null), p.names);
+    ST.kinds = Object.assign(Object.create(null), p.kinds);
+    ST.values = Object.create(null);
+    ST.okCodes = new Set();
+    for (const c in p.values){
+      ST.values[c] = p.values[c].split(",").map(Number);
+      ST.okCodes.add(c);
+    }
+    ST.index = (p.index||[]).map(r=>({hm:r[0], px:r[1], vol:0}));
+    ST.quote = p.quote || {};
+    ST.version++;
+    ST.ready = true;
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ---------------------------- 全量加载 ---------------------------- */
+async function fullLoad(force=false){
+  if (ST.busy) return;
+  ST.busy = true;
+  try{
+    progress(0.02, "连接数据源…");
+    const sess = await resolveSession();
+    if (!force && ST.date === sess.apiDate && ST.okCodes.size > 50){ progress(null); return; }
+
+    const sectors = await fetchSectorList();
+    if (!sectors.length) throw new Error("板块清单为空");
+    const meta = {}; sectors.forEach(s=>meta[s.code]=(meta[s.code]||[s.name,s.kind]));
+    progress(0.06, `已获取 ${sectors.length} 个板块，开始拉取分时资金流…`);
+    await new Promise(r=>setTimeout(r, 30));
+
+    const rows = await poolMap(sectors, s=>fetchKline(s.code), CFG.poolKline,
+      (d,t)=>progress(0.06+0.9*d/t, `拉取分时资金流 ${d}/${t} …`));
+
+    // 重建面板
+    ST.axis=[]; ST.axisIdx=Object.create(null); ST.values=Object.create(null); ST.okCodes=new Set();
+    const map = {};
+    sectors.forEach((s,k)=>{ if (rows[k] && rows[k].length) map[s.code]=rows[k]; });
+    applyKline(map, meta);
+    try{ await fetchQuotes(); }catch(e){}
+    ST.lastFull = Date.now();
+    ST.ready = true;
+    progress(1, "完成，正在渲染…");
+    setTimeout(()=>progress(null), 400);
+    const cached = saveCache();
+    if (!cached) console.warn("localStorage 缓存写入失败（可能超配额），下次打开会重新拉取");
+  }catch(e){
+    progress(null);
+    ST.note = "数据拉取失败：" + e.message;
+    $("note").innerHTML =
+      "<b>取数失败</b>：连接不上数据源（" + e.message + "）。<br/>"
+      + "如果是用 <b>Firefox</b> 打开的，它默认禁止本地文件页面访问网络数据，"
+      + "请改用 <b>Edge</b> 或 <b>Chrome</b> 打开本文件，或使用桌面上的快捷方式。";
+  }finally{
+    ST.busy = false;
+  }
+}
+
+/* ---------------------------- 渲染：图表 ---------------------------- */
+function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).trim(); }
+function P(){ return { fg:cssVar("--fg"), fg2:cssVar("--fg2"), fg3:cssVar("--fg3"),
+  chart:cssVar("--chart"), grid:cssVar("--grid"), zero:cssVar("--zero"),
+  up:cssVar("--up"), dn:cssVar("--dn"), acc:cssVar("--acc"), line:cssVar("--line") }; }
+const UP_SEQ=["#ff4d5e","#ff7a45","#f7b731","#d94f8a","#c0392b","#e8590c","#f06595","#ffa94d","#e64980","#ff8787"];
+const DN_SEQ=["#22c39a","#2f8fd8","#5b6dd8","#0fa3a3","#1f9d6a","#3fa9a0","#2b8a8a","#4c6ef5","#186d78","#12b886"];
+
+function fitCanvas(cv, cssH){
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || cv.parentElement.clientWidth;
+  cv.style.height = cssH + "px";
+  cv.width = Math.round(w*dpr); cv.height = Math.round(cssH*dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx,w,h:cssH};
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+
+function drawFan(fan){
+  if (!fan.items.length) return;
+  const {ctx,w,h} = fitCanvas($("cFan"), 470);
+  const p = P();
+  // 板块名已移到图下方的图例（#fanLegend），右侧不再需要标签区，
+  // 绘图区可以占满整宽 —— 这是手机上一屏看全曲线的关键。
+  const padL=14, padR=18, padT=22, padB=26;
+  const plotW=w-padL-padR, plotH=h-padT-padB;
+  const items=fan.items, axis=fan.axis, N=axis.length;
+  if (N<2) return;
+  ctx.clearRect(0,0,w,h); ctx.fillStyle=p.chart; ctx.fillRect(0,0,w,h);
+
+  let lo=Infinity, hi=-Infinity;
+  items.forEach(it=>it.values.forEach(v=>{ if(v<lo)lo=v; if(v>hi)hi=v; }));
+  if (!isFinite(lo)) return;
+  const span=(hi-lo)||1; lo-=span*.08; hi+=span*.08;
+  const X = i => padL + (i/(N-1))*plotW;
+  const Y = v => padT + (1-(v-lo)/(hi-lo))*plotH;
+
+  ctx.strokeStyle=p.grid; ctx.lineWidth=1;
+  for (let k=0;k<=4;k++){ const y=padT+plotH*k/4;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+plotW,y); ctx.stroke(); }
+  if (lo<0 && hi>0){
+    ctx.strokeStyle=p.zero; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(padL,Y(0)); ctx.lineTo(padL+plotW,Y(0)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle=p.fg3; ctx.font="11px system-ui"; ctx.textAlign="left";
+    ctx.fillText("0 轴", padL+4, Y(0)-5);
+  }
+  // 窄屏时刻度少一点，否则标签互相压住
+  const stepT=Math.max(1,Math.floor(N/((window.innerWidth<820)?5:9)));
+  ctx.fillStyle=p.fg3; ctx.font="11px system-ui"; ctx.textAlign="center";
+  for (let i=0;i<N;i+=stepT) ctx.fillText(axis[i], X(i), h-8);
+
+  items.forEach((it,idx)=>{
+    const color = it.net>=0 ? UP_SEQ[idx%UP_SEQ.length] : DN_SEQ[idx%DN_SEQ.length];
+    it._c = color;
+    ctx.strokeStyle=color; ctx.lineWidth=2; ctx.lineJoin="round"; ctx.lineCap="round";
+    ctx.beginPath();
+    it.values.forEach((v,i)=>{ const x=X(i),y=Y(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.stroke();
+    ctx.fillStyle=color; ctx.beginPath();
+    ctx.arc(X(it.values.length-1), Y(it.values[it.values.length-1]), 3.6, 0, Math.PI*2); ctx.fill();
+  });
+
+  // 板块名与净额不再画在曲线末端（右侧空间挤不开，手机上尤其糊成一团），
+  // 改由 renderFanLegend() 输出到图下方的图例里。
+  ctx.fillStyle=p.fg3; ctx.font="11px system-ui"; ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+  ctx.fillText(`共 ${N} 个分钟点 · 截至 ${axis[N-1]}`, padL+2, 13);
+}
+
+/* 曲线颜色 → 板块名 的对应关系，渲染成图下方的图例（自动换行铺满整行）。
+   取色规则必须与 drawFan 内一致：净流入用 UP_SEQ、净流出用 DN_SEQ，按 items 下标取。 */
+function renderFanLegend(fan){
+  const box = $("fanLegend");
+  if (!box) return;
+  if (!fan || !fan.items || !fan.items.length){ box.innerHTML = ""; return; }
+  box.innerHTML = fan.items.map((it, idx)=>{
+    const color = it.net >= 0 ? UP_SEQ[idx % UP_SEQ.length] : DN_SEQ[idx % DN_SEQ.length];
+    return `<span class="lg"><i style="background:${color}"></i>${it.name}`
+         + ` <b class="${it.net>=0?"up":"dn"}">${sgn(it.net)}</b></span>`;
+  }).join("");
+}
+
+/* 默认视图：按时长等比的泳道图 —— 某题材当主角多久，格子就有多宽 */
+function drawLeaderLanes(L){
+  if (!L.length) return;
+  const nw = (window.innerWidth < 820);
+  // 与 drawLeaderGrid 同理：手机上「第 N 名」需 42px，PADL 必须够宽，
+  // 否则左侧标签会被画到画布外（这就是"错位"的观感来源）。
+  const PADL = nw ? 34 : 56, PADR = nw ? 14 : 20, PADT = 12,
+        LANEH = nw ? 54 : 46, LANEGAP = 8, AXISH = 24;
+  const H = PADT + 3*(LANEH+LANEGAP) + AXISH + 4;
+  const {ctx,w,h} = fitCanvas($("cLead"), H);
+  const p = P();
+  ctx.clearRect(0,0,w,h); ctx.fillStyle=p.chart; ctx.fillRect(0,0,w,h);
+
+  const avail = w - PADL - PADR;
+  const startIdx = L[0].idx;
+  const endIdx = Math.max(startIdx + 1, ST.axis.length - 1);
+  const X = idx => PADL + ((idx - startIdx) / (endIdx - startIdx)) * avail;
+
+  ctx.textBaseline = "middle";
+  for (let r=0; r<3; r++){
+    const y = PADT + r*(LANEH+LANEGAP);
+    ctx.fillStyle = p.fg3;
+    ctx.font = (nw ? "11.5px " : "12px ") + "system-ui";
+    ctx.textAlign = "right";
+    ctx.fillText(nw ? (r+1) + "名" : "第 " + (r+1) + " 名", PADL-10, y + LANEH/2);
+    ctx.fillStyle = p.grid; ctx.globalAlpha = .45;
+    roundRect(ctx, PADL, y, avail, LANEH, 6); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    const runs = [];
+    for (let k=0;k<L.length;k++){
+      const it = L[k].top[r];
+      if (!it) continue;
+      const last = runs[runs.length-1];
+      if (last && last.name === it.name){ last.end = k; last.net = it.net; }
+      else runs.push({ name: it.name, start: k, end: k, net: it.net });
+    }
+    for (let ri=0; ri<runs.length; ri++){
+      const run = runs[ri];
+      const x0 = X(L[run.start].idx);
+      const nextIdx = (run.end + 1 < L.length) ? L[run.end+1].idx
+                                              : Math.min(endIdx, L[run.end].idx + 20);
+      const bw = Math.max(30, X(nextIdx) - x0 - 4);
+      ctx.fillStyle = run.net >= 0 ? p.up : p.dn;
+      ctx.globalAlpha = .93;
+      roundRect(ctx, x0 + 2, y + 3.5, bw, LANEH - 7, 5); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.textAlign = "center"; ctx.fillStyle = "#fff";
+      const wide = bw >= 96;
+      ctx.font = (wide ? "700 14px " : "700 12.5px ") + "system-ui";
+      ctx.fillText(fitText(ctx, run.name, bw - 12), x0 + 2 + bw/2,
+                   y + LANEH/2 + (wide ? -7.5 : 0));
+      if (wide){
+        const t0 = L[run.start].time;
+        const t1 = (run.end + 1 < L.length) ? L[run.end+1].time
+                                            : (ST.axis[Math.min(endIdx, L[run.end].idx + 10)] || "");
+        ctx.font = "10.5px system-ui"; ctx.globalAlpha = .88;
+        ctx.fillText(t0 + "–" + t1, x0 + 2 + bw/2, y + LANEH/2 + 9.5);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  const ticks = ["09:30","10:00","10:30","11:00","11:30","13:30","14:00","14:30","15:00"];
+  const yA = PADT + 3*(LANEH+LANEGAP) + 8;
+  ctx.strokeStyle = p.grid; ctx.lineWidth = 1;
+  ctx.font = "11px system-ui"; ctx.fillStyle = p.fg3; ctx.textAlign = "center";
+  for (const t of ticks){
+    const ai = ST.axisIdx[t];
+    if (ai === undefined || ai < startIdx || ai > endIdx) continue;
+    const x = X(ai);
+    ctx.beginPath(); ctx.moveTo(x, PADT); ctx.lineTo(x, yA - 6); ctx.stroke();
+    ctx.fillText(t, x, yA + 9);
+  }
+}
+
+/* 备选视图：每 10 分钟一格（自动换行，格子更大） */
+function drawLeaderGrid(L){
+  if (!L.length) return;
+  const nw = (window.innerWidth < 820);
+  // ★ 左侧「第 N 名」在 12px 字号下约需 42px。手机版曾把 PADL 压到 38px，
+  //   文字直接画到画布外 —— 这是之前"错位"的主要来源。手机改用「1名/2名/3名」
+  //   两字（约 24px），PADL 给 34px 才刚好放下。
+  const ROWH = nw ? 48 : 40, SUBGAP = nw ? 34 : 30;
+  const PADL = nw ? 34 : 56, PADR = nw ? 10 : 16, PADT = nw ? 10 : 8;
+  const MINW = nw ? 108 : 118;
+  const cv = $("cLead");
+  const avail0 = (cv.clientWidth || 1100) - PADL - PADR;
+  const cols = Math.max(2, Math.min(L.length, Math.floor(avail0 / MINW)));
+  const blocks = Math.ceil(L.length / cols);
+  const H = PADT + blocks * (3*ROWH + SUBGAP) + 8;
+  const {ctx,w,h} = fitCanvas(cv, H);
+  const p = P();
+  ctx.clearRect(0,0,w,h); ctx.fillStyle=p.chart; ctx.fillRect(0,0,w,h);
+  const avail = w - PADL - PADR;
+  const cw = avail / cols;
+  const GAPX = 5;                       // 格子左右留白（旧版只留 3，格子几乎贴在一起）
+  const label = r => (nw ? (r+1) + "名" : "第 " + (r+1) + " 名");
+
+  for (let b=0; b<blocks; b++){
+    const y0 = PADT + b*(3*ROWH + SUBGAP);
+    ctx.textBaseline = "middle";
+    ctx.font = (nw ? "11.5px " : "12px ") + "system-ui";
+    ctx.fillStyle = p.fg3; ctx.textAlign = "right";
+    for (let r=0;r<3;r++) ctx.fillText(label(r), PADL-10, y0 + r*ROWH + ROWH/2);
+
+    for (let c=0;c<cols;c++){
+      const idx = b*cols + c;
+      if (idx >= L.length) break;
+      const cell = L[idx];
+      const x = PADL + c*cw;
+      for (let r=0;r<3;r++){
+        const it = cell.top[r];
+        if (!it) continue;
+        const y = y0 + r*ROWH;
+        ctx.fillStyle = it.net>=0 ? p.up : p.dn;
+        ctx.globalAlpha = .92;
+        roundRect(ctx, x+GAPX, y+2.5, cw-GAPX*2, ROWH-6, 6); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.textAlign = "center"; ctx.fillStyle = "#fff";
+        ctx.font = "700 13px system-ui";
+        ctx.fillText(fitText(ctx, it.name, cw-GAPX*2-12), x+cw/2, y+ROWH/2-7.5);
+        ctx.font = "11px system-ui"; ctx.globalAlpha = .9;
+        ctx.fillText(sgn(it.net), x+cw/2, y+ROWH/2+8.5);
+        ctx.globalAlpha = 1;
+      }
+    }
+    // 时刻标签：本块正下方居中，字号/颜色加重，读起来才对得上
+    ctx.textAlign = "center";
+    ctx.font = (nw ? "12px " : "12.5px ") + "system-ui";
+    ctx.fillStyle = p.fg2;
+    for (let c=0;c<cols;c++){
+      const idx = b*cols + c;
+      if (idx >= L.length) break;
+      ctx.fillText(L[idx].time, PADL + c*cw + cw/2, y0 + 3*ROWH + 15);
+    }
+    if (b < blocks-1){
+      ctx.strokeStyle = p.grid; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(PADL, y0 + 3*ROWH + SUBGAP - 8);
+      ctx.lineTo(w - PADR, y0 + 3*ROWH + SUBGAP - 8);
+      ctx.stroke();
+    }
+  }
+}
+
+/* 泳道图用 20 分钟粒度：主角更替不需要 10 分钟精度，
+   粒度粗一点每格才放得下完整题材名与时间段，可读性最好；
+   逐格图保留 10 分钟粒度用于精细核对。 */
+const LEADER_STEP = { lanes: 20, grid: 10 };
+
+function drawLeaders(i){
+  const step = LEADER_STEP[LEADER_MODE] || 10;
+  const slices = buildLeaders(i, step);
+  if (LEADER_MODE === "lanes") drawLeaderLanes(slices);
+  else drawLeaderGrid(slices);
+}
+
+function drawTime(ts){
+  if (!ts.items.length) return;
+  const items=ts.items, axis=ts.axis, N=axis.length, rows=items.length;
+  const {ctx,w,h} = fitCanvas($("cTime"), Math.max(200, rows*26+34));
+  const p=P();
+  ctx.clearRect(0,0,w,h); ctx.fillStyle=p.chart; ctx.fillRect(0,0,w,h);
+  const padL=(window.innerWidth<820)?66:96, padR=12, padT=8, padB=22;
+  const plotW=w-padL-padR, rh=(h-padT-padB)/rows;
+  const stepX=Math.max(1, Math.round(N/((window.innerWidth<820)?22:48)));
+  const X = i => padL + (N<=1?0:(i/(N-1))*plotW);
+  ctx.strokeStyle=p.grid; ctx.lineWidth=1;
+  items.forEach((it,r)=>{ const y=padT+rh*(r+.5);
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+plotW,y); ctx.stroke(); });
+  items.forEach((it,r)=>{
+    const peak = it.peak || 1, y=padT+rh*(r+.5);
+    for (let i=0;i<N;i+=stepX){
+      const v=it.values[i]; if (v===undefined) continue;
+      const rad = 2 + Math.min(1, Math.abs(v)/peak)*6.5;
+      ctx.fillStyle = v>=0 ? p.up : p.dn; ctx.globalAlpha=.85;
+      ctx.beginPath(); ctx.arc(X(i), y, rad, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    ctx.fillStyle=p.fg2; ctx.font="11.5px system-ui"; ctx.textAlign="right"; ctx.textBaseline="middle";
+    ctx.fillText(it.name.length>7?it.name.slice(0,7):it.name, padL-8, y);
+  });
+  ctx.fillStyle=p.fg3; ctx.font="10.5px system-ui"; ctx.textAlign="center";
+  const st=Math.max(1,Math.ceil(N/14));
+  for (let i=0;i<N;i+=st) ctx.fillText(axis[i], X(i), h-7);
+}
+
+/* ---------------------------- 渲染：表格与列表 ---------------------------- */
+/* 概念题材榜（板块辨识度榜）与 一级行业格局：列集一致
+   题材 | 净额 | 5min | 排名 | 辨识度
+   —— 已删除「10min跃迁」「z」「龙头」三列
+      （跃迁/z 的数据仍在 rows 里，供事件检测与排序使用，只是不展示；
+        龙头单独放在下方「龙头领先反应」面板，不占榜单宽度）
+   列宽用 <colgroup> 锁定，保证左右两张表的数值列严格对齐（table-layout:fixed）
+   opts: {jump:bool, z:bool} */
+function rowsHtml(list, opts){
+  opts = opts || {};
+  const showJump = !!opts.jump, showZ = !!opts.z;
+  if (!list || !list.length) return "<tbody><tr><td class='nm'>无数据</td></tr></tbody>";
+  let s = "<colgroup><col class='c-rk'><col class='c-nm'>"
+        + "<col class='c-num'><col class='c-num'><col class='c-num'>"
+        + (showJump ? "<col class='c-num'>" : "")
+        + (showZ ? "<col class='c-num'>" : "")
+        + "<col class='c-sal'></colgroup>"
+        + "<thead><tr><th class='rk'></th><th>题材</th><th class='n'>净额(亿)</th>"
+        + "<th class='n'>5min</th><th class='n'>排名</th>"
+        + (showJump ? "<th class='n'>10min跃迁</th>" : "")
+        + (showZ ? "<th class='n'>z</th>" : "")
+        + "<th class='n'>辨识度</th>"
+        + "</tr></thead><tbody>";
+  const mx = Math.max.apply(null, list.map(r=>Math.abs(r.net))) || 1;
+  list.forEach((r,i)=>{
+    const jp = (r.jump10===undefined||r.jump10===null) ? null : r.jump10;
+    const zz = (r.z===undefined||r.z===null) ? null : r.z;
+    const rk = (r.rank===undefined||r.rank===null) ? null : r.rank;
+    s += `<tr><td class="rk">${i+1}</td>`
+       + `<td class="nm" title="${r.name}">${r.name}`
+       + `<div class="bar" style="width:${Math.max(3,Math.abs(r.net)/mx*100)}%;background:var(--${r.net>=0?"up":"dn"})"></div></td>`
+       + `<td class="n ${r.net>=0?"up":"dn"}">${sgn(r.net)}</td>`
+       + `<td class="n ${r.d5>=0?"up":"dn"}">${sgn(r.d5)}</td>`
+       + `<td class="n">${rk===null?"—":rk}</td>`
+       + (showJump ? `<td class="n ${jp>0?"up":(jp<0?"dn":"flat")}">${jp===null?"—":(jp>0?"+":"")+jp}</td>` : "")
+       + (showZ ? `<td class="n ${zz>0?"up":(zz<0?"dn":"flat")}">${zz===null?"—":sgn(zz)}</td>` : "")
+       + `<td class="n">${fmt(r.salience,2)}</td>`
+       + `</tr>`;
+  });
+  return s + "</tbody>";
+}
+
+/* ---------------------------- 主渲染 ---------------------------- */
+let RENDER_CACHE = {};
+function render(){
+  if (!ST.ready) return;
+  const i = ST.axis.length - 1;
+  if (i < 2) return;
+  washAll();                       // ★ 绘制前统一校验与清洗（就地修正，记录异常清单）
+  const codes = Array.from(ST.okCodes).filter(c => ST.values[c] && ST.kinds[c] && aligned(c));
+  const rows = analyze(codes, i);
+  window.__lastRows = rows;        // 供龙头分析复用
+
+  // 顶栏
+  const hist = (ST.mode === "history");
+  $("bDate").textContent = hist ? ST.histDate : (ST.date || "—");
+  $("bPhase").innerHTML = hist
+    ? `历史回看 <b>周${weekdayOf(ST.histDate)}</b>`
+    : `时段 <b>${ST.phaseLabel}</b>`;
+  const bl = $("bLive");
+  if (hist){ bl.className="badge"; bl.innerHTML="历史回看 · 已收盘数据"; }
+  else if (ST.live){ bl.className="badge live"; bl.innerHTML='<span class="pulse"></span>盘中实时'; }
+  else {
+    bl.className = "badge";
+    bl.innerHTML = (ST.kind==="closed") ? "今日已收盘"
+      : (ST.kind==="lunch") ? "午间休市"
+      : (ST.kind==="nontrading") ? "非交易日 · 展示最近交易日"
+      : (ST.kind==="preopen") ? "未开盘 · 展示最近交易日"
+      : (ST.date===todayStr()) ? "今日已收盘" : "非实时 · 展示最近交易日";
+  }
+  $("btnLive").style.display = hist ? "" : "none";
+  $("bBars").textContent = `数据点 ${ST.axis.length}`;
+  $("note").textContent = ST.note || "";
+  const qAll = [ ST.quote || {}, ST.quote2 || {} ];
+  $("quote").innerHTML = HEADER_INDEXES.map((hx, k) => {
+    const x = qAll[k] || {};
+    if (hist){
+      const src = k === 0 ? (ST.histRec && ST.histRec.index) : (ST.histRec && ST.histRec.index2);
+      if (!src) return "";
+      const c = src.chg || 0, pc = src.pct || 0;
+      return `<span title="${hx.label}" style="color:var(--fg3);font-size:11.5px${k?",margin-left:9px":""}">${hx.label}</span>`
+           + `<span class="px ${sign(c)}">${fmt(src.close,2)}</span>`
+           + `<span class="chg ${sign(c)}">${sgn(c)} (${sgn(pc)}%)</span>`;
+    }
+    if (!x.f43) return "";
+    const c = x.f169 || 0, pc = x.f170 || 0;
+    return `<span title="${hx.label}" style="color:var(--fg3);font-size:11.5px${k?",margin-left:9px":""}">${hx.label}</span>`
+         + `<span class="px ${sign(c)}">${fmt(x.f43,2)}</span>`
+         + `<span class="chg ${sign(c)}">${sgn(c)} (${sgn(pc)}%)</span>`;
+  }).join("");
+
+  // 榜单：历史回看时直接用归档里存好的收盘数值（用"平线重算"会把 5min/辨识度算成 0）
+  const cs = rows.filter(r=>r.kind==="concept");
+  const ind = rows.filter(r=>r.kind==="industry");
+  const recRow = o => ({ name:o.n, net:o.net, d5:o.d5||0, jump10:o.j||0,
+                         salience:o.sal||0, rank:o.rk, z:o.zz });
+  if (hist && ST.histRec){
+    const R = ST.histRec;
+    $("tIn").innerHTML  = rowsHtml((R.boardIn ||[]).map(recRow), {jump:false, z:false});
+    $("tOut").innerHTML = rowsHtml((R.boardOut||[]).map(recRow), {jump:false, z:false});
+    $("tIndIn").innerHTML  = rowsHtml((R.indIn ||[]).map(recRow), {jump:false, z:false});
+    $("tIndOut").innerHTML = rowsHtml((R.indOut||[]).map(recRow), {jump:false, z:false});
+  } else {
+    // 板块辨识度榜（仅概念题材）与 一级行业格局：同一套列集
+    $("tIn").innerHTML  = rowsHtml(cs.slice().sort((a,b)=>b.net-a.net).slice(0,15), {jump:false, z:false});
+    $("tOut").innerHTML = rowsHtml(cs.slice().sort((a,b)=>a.net-b.net).slice(0,15), {jump:false, z:false});
+    $("tIndIn").innerHTML  = rowsHtml(ind.slice().sort((a,b)=>b.net-a.net).slice(0,8), {jump:false, z:false});
+    $("tIndOut").innerHTML = rowsHtml(ind.slice().sort((a,b)=>a.net-b.net).slice(0,8), {jump:false, z:false});
+  }
+
+  // 事件
+  const ev = (hist && ST.histRec && ST.histRec.events && ST.histRec.events.length)
+    ? ST.histRec.events : detectEvents(rows, 12, i);
+  const cls = t => (t.includes("失血")||t.includes("流出")||t.includes("撤离"))?"cold"
+                 : (t.includes("加速流入")||t.includes("新晋")||t.includes("回流"))?"hot":"";
+  $("evSub").textContent = ev.length ? `共 ${ev.length} 条 · 按强度排序` : "";
+  $("evList").innerHTML = ev.length
+    ? ev.map(e=>`<li><span class="tg ${cls(e.type)}">${e.type}</span><span class="txt"><b>${e.name}</b> — ${e.desc}</span></li>`).join("")
+    : "<li><span class='txt'>当前无显著事件</span></li>";
+
+  // 主线
+  const th = (hist && ST.histRec && ST.histRec.themes && ST.histRec.themes.length)
+    ? ST.histRec.themes.map(t=>({ core:t.core, n:t.n, total:t.total,
+        direction:t.dir, members:t.members.map(m=>({ name:m.n, net:m.net })) }))
+    : clusterThemes(rows, i);
+  $("thSub").textContent = th.length ? `${th.length} 个题材簇 · 取辨识度最高的若干组` : "";
+  $("themeList").innerHTML = th.length
+    ? th.map(t=>`<div class="theme ${t.total>=0?"in":"out"}">`
+      + `<div class="th"><b>${t.core}</b><span>${t.n} 个题材 · 合计 ${sgn(t.total)} 亿 · ${t.direction}</span></div>`
+      + `<div class="tm">${t.members.map(m=>`<span class="chip">${m.name} ${sgn(m.net)}</span>`).join("")}</div></div>`).join("")
+    : "<div class='placeholder'>当前无法聚类（数据点不足）</div>";
+
+  // 图
+  const fan = buildFan(rows, i);
+  drawFan(fan);
+  renderFanLegend(fan);
+  drawLeaders(i);
+  drawTime(buildTimelineSeries(rows, i));
+  renderKeyNodes();
+  renderStages();
+  renderCleanPanel();
+
+  const t = new Date();
+  $("foot").textContent = `单文件版 · 无需后台服务 · 最后更新 ${String(t.getHours()).padStart(2,"0")}:`
+    + `${String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}`
+    + ` · 板块 ${rows.length} 个（概念 ${cs.length} / 一级行业 ${ind.length}）`;
+  RENDER_CACHE.i = i;
+  renderTimetable();
+}
+
+/* =====================================================================
+   收盘数据归档 —— 滚动 30 个交易日
+   ---------------------------------------------------------------------
+   存储：localStorage["flowlive_archive_v1"]
+   {
+     v:1, limit:30, updatedAt:"YYYY-MM-DD HH:MM:SS",
+     sectorMeta: { "BK1211": ["汽车","industry"], ... },   // 全局板块字典，只存一份
+     days: [ DayRecord, ... ]                              // 按日期升序，长度 ≤ 30
+   }
+   DayRecord = {
+     date, savedAt, bars,
+     index: {open,high,low,close,chg,pct},   // 指数收盘快照
+     ix:    [[HH:MM, 点位], ...],            // 指数分时（画底部缩略带）
+     nets:  { "BK1211": 37.08, ... },        // 全部板块的收盘累计净额（用于榜单排序）
+     boardIn/boardOut: [{n,net,sal}],        // 概念题材 收盘净流入/净流出 Top15
+     indIn/indOut:     [{n,net}],            // 一级行业 Top6
+     themes: [{core,n,total,dir,members:[{n,net}]}],
+     events: [{type,name,desc}],
+     leaders:[{t, top:[{n,net}x3]}],         // 主角泳道（20 分钟粒度）
+     curves: { items:[{c,n,k,net,v:[...]}] } // 当日峰值最大的 40 个题材的完整分钟曲线
+   }
+
+   触发时机（tick 每轮都跑一次，幂等）：
+   · 对「当前面板里装载的这一天」判断是否已收盘定稿：
+       - 若该日 == 今天  → 必须处于「已收盘」时段才归档（盘中/午休不归档）
+       - 若该日 != 今天  → 数据源只会返回往期完整交易日，可直接归档
+     ★ 归档必须发生在「日期切换重拉之前」，否则周一开盘时上个交易日的数据会被覆盖掉。
+   ===================================================================== */
+const ARCHIVE_LIMIT = 30;
+const ARCHIVE_KEY = "flowlive_archive_v1";
+const CURVE_KEEP = 40;                 // 每日保留完整曲线的题材数
+const ARCHIVE_SV = 4;                  // 归档记录结构版本；改动记录内容时 +1 可触发整窗重写
+let LAST_ARCHIVE = null;               // 最近一次归档结果（界面与自检都会用到）
+
+function archiveRead(){
+  try{
+    const raw = localStorage.getItem(ARCHIVE_KEY);
+    if (!raw) return { v:1, limit:ARCHIVE_LIMIT, sectorMeta:{}, days:[] };
+    const o = JSON.parse(raw);
+    if (!o || !Array.isArray(o.days)) return { v:1, limit:ARCHIVE_LIMIT, sectorMeta:{}, days:[] };
+    o.sectorMeta = o.sectorMeta || {};
+    return o;
+  }catch(e){ return { v:1, limit:ARCHIVE_LIMIT, sectorMeta:{}, days:[] }; }
+}
+
+/* 写入时做配额保护：超限逐级降级（先丢老日期的曲线，再丢全部曲线） */
+function archiveWrite(obj){
+  const attempt = o => {
+    const s = JSON.stringify(o);
+    if (s.length > 3.6e6) return null;
+    try{ localStorage.setItem(ARCHIVE_KEY, s); return s.length; }catch(e){ return null; }
+  };
+  let bytes = attempt(obj);
+  if (bytes !== null) return { ok:true, bytes, degraded:0 };
+
+  const dd = obj.days.map(d=>Object.assign({}, d));
+  let deg = 0;
+  for (let i = dd.length - 6; i >= 0; i--){ if (dd[i].curves){ delete dd[i].curves; deg++; } }
+  bytes = attempt(Object.assign({}, obj, { days: dd }));
+  if (bytes !== null) return { ok:true, bytes, degraded:deg };
+
+  const d2 = dd.map(d=>{ const c = Object.assign({}, d); delete c.curves; return c; });
+  bytes = attempt(Object.assign({}, obj, { days: d2 }));
+  return (bytes !== null) ? { ok:true, bytes, degraded:99 } : { ok:false, bytes:0, degraded:99 };
+}
+
+/* 用「当前面板」生成某一天的收盘记录 */
+function buildDayRecord(date){
+  const i = ST.axis.length - 1;
+  if (i < 2) return null;
+  const codes = Array.from(ST.okCodes).filter(c=>ST.values[c] && ST.kinds[c] && aligned(c));
+  if (codes.length < 10) return null;
+
+  const rows = analyze(codes, i);
+  const cs = rows.filter(r=>r.kind==="concept");
+  const ind = rows.filter(r=>r.kind==="industry");
+  const byNet = arr => arr.slice().sort((a,b)=>b.net-a.net);
+
+  const nets = {};
+  codes.forEach(c => { nets[c] = +valAt(c, i).toFixed(2); });
+
+  const peakOf = c => { let m = 0; const a = ST.values[c];
+    for (let k = 0; k <= i; k++){ const v = Math.abs(a[k]); if (v > m) m = v; } return m; };
+  const picks = codes.slice().sort((a,b)=>peakOf(b)-peakOf(a)).slice(0, CURVE_KEEP);
+
+  const q = ST.quote || {};
+  return {
+    date,
+    sv: ARCHIVE_SV,
+    savedAt: new Date().toISOString().slice(0,19).replace("T"," "),
+    bars: i + 1,
+    index: { open:q.f46, high:q.f44, low:q.f45, close:q.f43, chg:q.f169, pct:q.f170 },
+    index2: (function(){ const x = ST.quote2 || {};
+      return { open:x.f46, high:x.f44, low:x.f45, close:x.f43, chg:x.f169, pct:x.f170 }; })(),
+    ix: ST.index.map(r=>[r.hm, r.px]),
+    nets,
+    boardIn:  byNet(cs).slice(0,15).map(r=>({ n:r.name, net:r.net, sal:r.salience, d5:r.d5, j:r.jump10, rk:r.rank, zz:r.z })),
+    boardOut: byNet(cs).slice(-15).reverse().map(r=>({ n:r.name, net:r.net, sal:r.salience, d5:r.d5, j:r.jump10, rk:r.rank, zz:r.z })),
+    indIn:  byNet(ind).slice(0,8).map(r=>({ n:r.name, net:r.net, sal:r.salience, rk:r.rank, zz:r.z })),
+    indOut: byNet(ind).slice(-8).reverse().map(r=>({ n:r.name, net:r.net, sal:r.salience, rk:r.rank, zz:r.z })),
+    nodes: keyNodes(i, 5, 1.5, 24),
+    stages: stageData(),
+    themes: clusterThemes(rows, i).map(t=>({ core:t.core, n:t.n, total:t.total,
+              dir:t.direction, members:t.members.map(m=>({ n:m.name, net:m.net })) })),
+    events: detectEvents(rows, 12, i).map(e=>({ type:e.type, name:e.name, desc:e.desc })),
+    leaders: buildLeaders(i, 20).map(s=>({ t:s.time,
+              top: s.top.map(x=>({ n:x.name, net:x.net })) })),
+    curves: {
+      items: picks.map(c=>({ c, n: ST.names[c], k: ST.kinds[c],
+        net: +valAt(c, i).toFixed(2),
+        v: ST.values[c].slice(0, i+1).map(x=>+x.toFixed(2)) })),
+    },
+  };
+}
+
+/* 归档「当前面板装载的那一天」。dateOverride 用于在 resolveSession 改掉 ST.date 之前传入旧值。 */
+function maybeArchive(sess, dateOverride, force){
+  const d = dateOverride || ST.date;
+  if (!d) return null;
+  if (!force){
+    if (!ST.ready || ST.axis.length < 3) return null;
+    if (ST.mode === "history") return null;              // 历史回看时不写档
+    const today = todayStr();
+    const completed = (d === today) ? (sess.phaseKey === "closed") : true;
+    if (!completed) return null;                         // 盘中 / 午休：数据未定稿
+    // ★ 二次保险：只有"数据点足够多"才允许作为收盘档定稿。
+    //   否则一旦时段判定出错（或凌晨打开页面时数据源只回了几分钟），
+    //   会把残缺数据写成当天的收盘记录，且因为 exist.bars >= axis.length
+    //   的判断，当天真正的收盘数据反而可能被这条残缺记录顶掉。
+    if (ST.axis.length < 200) return null;
+  }
+  const arch = archiveRead();
+  const exist = arch.days.find(x=>x.date === d);
+  if (exist && !force && exist.sv === ARCHIVE_SV && exist.bars >= ST.axis.length){
+    LAST_ARCHIVE = { date:d, action:"skip", reason:"已存在且数据不更旧", total:arch.days.length };
+    return LAST_ARCHIVE;
+  }
+  const rec = buildDayRecord(d);
+  if (!rec) return null;
+
+  const meta = arch.sectorMeta || {};
+  for (const c in rec.nets){ if (!meta[c] && ST.names[c]) meta[c] = [ST.names[c], ST.kinds[c]]; }
+
+  let days = arch.days.filter(x=>x.date !== d);
+  days.push(rec);
+  days.sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : 0));
+
+  const evicted = [];
+  while (days.length > ARCHIVE_LIMIT){ evicted.push(days.shift().date); }
+
+  const res = archiveWrite({ v:1, limit:ARCHIVE_LIMIT, sectorMeta: meta,
+                             updatedAt: rec.savedAt, days });
+  LAST_ARCHIVE = { date:d, action: exist ? "update" : "add",
+                   evicted, total: days.length, ok: res.ok,
+                   kb: Math.round(res.bytes/1024), degraded: res.degraded };
+  return LAST_ARCHIVE;
+}
+
+/* =====================================================================
+   近 30 个交易日 —— 时间表
+   ===================================================================== */
+const WEEK_CN = ["日","一","二","三","四","五","六"];
+function weekdayOf(dateStr){
+  const p = dateStr.split("-").map(Number);
+  return WEEK_CN[new Date(p[0], p[1]-1, p[2]).getDay()];
+}
+
+function renderTimetable(){
+  const box = $("timetable");
+  if (!box) return;
+  const arch = archiveRead();
+  const smeta = arch.sectorMeta || {};
+  const list = arch.days.slice().reverse();          // 最新的排前面
+  const n = arch.days.length;
+  const meta = $("ttMeta");
+
+  if (meta){
+    const left = ARCHIVE_LIMIT - n;
+    meta.textContent = n === 0
+      ? "还没有归档数据。每个交易日收盘后会自动存一条；攒满 30 条后，新的一天会挤掉最早的一天。"
+      : `已归档 ${n} / ${ARCHIVE_LIMIT} 个交易日` +
+        (left > 0 ? `（再攒 ${left} 天开始淘汰最早记录）` : "（已达上限，新的一天挤掉最早的一天）") +
+        (LAST_ARCHIVE && LAST_ARCHIVE.evicted && LAST_ARCHIVE.evicted.length
+          ? ` · 最近淘汰：${LAST_ARCHIVE.evicted.join("、")}` : "");
+  }
+  if (!list.length){ box.innerHTML = ""; return; }
+
+  /* 在两个类别里分别取第 1 名：
+     · 行业  = 一级行业（31 个）
+     · 题材  = 概念题材（~400 个）
+     两个都列出来，就不会出现"明明汽车吸金最多，表里却看不见"的情况。 */
+  const pick = (rec, kind, dir, k) => {
+    const arr = [];
+    for (const c in (rec.nets || {})){
+      const m = smeta[c] || [c, "concept"];
+      if (kind && m[1] !== kind) continue;
+      arr.push({ name:m[0], kind:m[1], net:rec.nets[c] });
+    }
+    arr.sort((a,b)=> dir > 0 ? b.net - a.net : a.net - b.net);
+    return arr.slice(0, k);
+  };
+  const fromRec = (rec, kind, dir) => {
+    if (rec.nets && Object.keys(rec.nets).length) return pick(rec, kind, dir, 1)[0] || null;
+    // 兼容早期没有 nets 的记录
+    const src = kind === "industry"
+      ? (dir > 0 ? rec.indIn : rec.indOut)
+      : (dir > 0 ? rec.boardIn : rec.boardOut);
+    const o = (src || [])[0];
+    return o ? { name:o.n, kind, net:o.net } : null;
+  };
+
+  let h = `<table style="font-size:12.4px"><thead><tr>
+      <th style="width:92px">交易日</th><th style="width:42px">星期</th>
+      <th class="n" style="width:86px">上证收盘</th><th class="n" style="width:66px">涨跌幅</th>
+      <th>最强行业<span style="font-weight:400;color:var(--fg3)"> · 一级行业</span></th>
+      <th>最强题材<span style="font-weight:400;color:var(--fg3)"> · 概念</span></th>
+      <th>最弱行业</th>
+      <th>最弱题材</th>
+      <th>主线<span style="font-weight:400;color:var(--fg3)"> · 题材簇</span></th>
+      <th style="width:52px">数据点</th><th style="width:66px"></th>
+      </tr></thead><tbody>`;
+  for (const d of list){
+    const ix = d.index || {};
+    const chgCls = (ix.chg||0) >= 0 ? "up" : "dn";
+    const sInd = fromRec(d, "industry", 1);
+    const sCon = fromRec(d, "concept", 1);
+    const wInd = fromRec(d, "industry", -1);
+    const wCon = fromRec(d, "concept", -1);
+    const th = (d.themes||[])[0] || {};
+    const isCur = (ST.mode === "history" && ST.histDate === d.date);
+    const cell = o => o ? `${o.name} ${sgn(o.net)}` : "—";
+
+    h += `<tr${isCur ? ' style="background:var(--bg3)"' : ""}>
+      <td class="d">${d.date}</td>
+      <td class="d">周${weekdayOf(d.date)}</td>
+      <td class="n">${ix.close!=null ? fmt(ix.close,2) : "—"}</td>
+      <td class="n ${chgCls}">${ix.pct!=null ? sgn(ix.pct)+"%" : "—"}</td>
+      <td class="nm" title="${sInd?sInd.name:""}">${cell(sInd)}</td>
+      <td class="nm" title="${sCon?sCon.name:""}">${cell(sCon)}</td>
+      <td class="nm" title="${wInd?wInd.name:""}">${cell(wInd)}</td>
+      <td class="nm" title="${wCon?wCon.name:""}">${cell(wCon)}</td>
+      <td class="nm" title="${th.core||""}">${th.core ? th.core+"（"+th.n+"题材 "+sgn(th.total)+"亿）" : "—"}</td>
+      <td class="n">${d.bars||"—"}</td>
+      <td><button data-hist="${d.date}" style="padding:3px 8px;font-size:12px;white-space:nowrap">查看</button></td>
+    </tr>`;
+  }
+  h += "</tbody></table>";
+  h += `<div style="margin-top:8px;font-size:12px;color:var(--fg3);line-height:1.8">
+    「行业」= 31 个一级行业（汽车、电子、医药生物…）；「题材」= 概念题材（智谱AI概念、光模块、存储芯片…）。
+    两者分开各列一栏，所以行业吸金最多（如汽车）和概念被炒（如智谱AI概念）都能同时看到，互不遮挡。
+  </div>`;
+  box.innerHTML = h;
+  box.querySelectorAll("button[data-hist]").forEach(btn=>{
+    btn.onclick = ()=> enterHistory(btn.getAttribute("data-hist"));
+  });
+}
+
+/* =====================================================================
+   历史回看：把归档的某一天装进 ST（不影响实时数据，退出时还原）
+   ===================================================================== */
+let LIVE_BACKUP = null;
+
+function enterHistory(date){
+  const arch = archiveRead();
+  const rec = arch.days.find(d=>d.date === date);
+  if (!rec){ alert("该日没有归档数据"); return false; }
+
+  if (ST.mode !== "history"){
+    LIVE_BACKUP = { axis: ST.axis, axisIdx: ST.axisIdx, names: ST.names, kinds: ST.kinds,
+                    values: ST.values, okCodes: ST.okCodes, index: ST.index, quote: ST.quote,
+                    quote2: ST.quote2, note: ST.note };
+  }
+  ST.mode = "history"; ST.histDate = date; ST.histRec = rec;
+
+  let ax = (rec.ix || []).map(r=>r[0]);
+  if (!ax.length && rec.curves && rec.curves.items.length)
+    ax = rec.curves.items[0].v.map(function(_,k){ return String(k); });
+  if (!ax.length) ax = Array.from({length: rec.bars||0}, function(_,k){ return String(k); });
+  if (rec.bars && ax.length > rec.bars) ax = ax.slice(ax.length - rec.bars);
+  ST.axis = ax.slice();
+  const bars = ST.axis.length;
+
+  ST.axisIdx = Object.create(null); ST.axis.forEach((x,k)=>{ ST.axisIdx[x]=k; });
+  ST.names = Object.create(null); ST.kinds = Object.create(null);
+  ST.values = Object.create(null); ST.okCodes = new Set();
+
+  const smeta = arch.sectorMeta || {};
+  // 1) 先用收盘净额把全部板块铺成"平线"，保证榜单排序与该日收盘一致
+  for (const c in (rec.nets||{})){
+    const m = smeta[c] || [c, "concept"];
+    ST.names[c] = m[0]; ST.kinds[c] = m[1];
+    ST.values[c] = new Array(bars).fill(rec.nets[c]);
+    ST.okCodes.add(c);
+  }
+  // 2) 再用归档的完整曲线覆盖被保留下来的题材
+  if (rec.curves){
+    for (const it of rec.curves.items){
+      ST.names[it.c] = it.n; ST.kinds[it.c] = it.k;
+      const arr = new Array(bars).fill(it.net);
+      for (let k = 0; k < Math.min(bars, it.v.length); k++) arr[k] = it.v[k];
+      ST.values[it.c] = arr;
+      ST.okCodes.add(it.c);
+    }
+  }
+  ST.index = (rec.ix||[]).map(r=>({ hm:r[0], px:r[1], vol:0 }));
+  ST.quote = { f43: rec.index&&rec.index.close, f44: rec.index&&rec.index.high,
+               f45: rec.index&&rec.index.low,   f46: rec.index&&rec.index.open,
+               f169: rec.index&&rec.index.chg,  f170: rec.index&&rec.index.pct };
+  ST.quote2 = rec.index2 ? { f43: rec.index2.close, f44: rec.index2.high,
+               f45: rec.index2.low, f46: rec.index2.open,
+               f169: rec.index2.chg, f170: rec.index2.pct } : {};
+  ST.note = `历史回看：${date}（周${weekdayOf(date)}）的收盘数据，共 ${rec.bars} 个数据点`;
+  ST.version++;
+  render();
+  renderTimetable();
+  return true;
+}
+
+function exitHistory(){
+  if (ST.mode !== "history") return;
+  if (LIVE_BACKUP){
+    ST.axis = LIVE_BACKUP.axis; ST.axisIdx = LIVE_BACKUP.axisIdx;
+    ST.names = LIVE_BACKUP.names; ST.kinds = LIVE_BACKUP.kinds;
+    ST.values = LIVE_BACKUP.values; ST.okCodes = LIVE_BACKUP.okCodes;
+    ST.index = LIVE_BACKUP.index; ST.quote = LIVE_BACKUP.quote; ST.quote2 = LIVE_BACKUP.quote2;
+    ST.note = LIVE_BACKUP.note;
+  }
+  ST.mode = "live"; ST.histDate = null; ST.histRec = null;
+  LIVE_BACKUP = null;
+  ST.version++;
+  render();
+  renderTimetable();
+}
+
+/* =====================================================================
+   自检：非交易日回退 + 滚动窗口 + 幂等
+   ===================================================================== */
+function __selftest(){
+  const R = [];
+  const ok = (name, cond, got) => R.push({ name, pass: !!cond, got });
+
+  // ---- A. 日期判定：给定"当前时刻 + 数据源返回的交易日"，界面应展示哪一天 ----
+  const cases = [
+    ["交易日 盘中(周五 10:30)",    "2026-09-18T10:30:00", "2026-09-18", "2026-09-18", true],
+    ["交易日 午休(周五 12:00)",    "2026-09-18T12:00:00", "2026-09-18", "2026-09-18", false],
+    ["交易日 收盘后(周五 15:30)",  "2026-09-18T15:30:00", "2026-09-18", "2026-09-18", false],
+    ["周六 9/19 上午",            "2026-09-19T10:00:00", "2026-09-18", "2026-09-18", false],
+    ["周六 9/19 晚间",            "2026-09-19T20:00:00", "2026-09-18", "2026-09-18", false],
+    ["周日 9/20 上午",            "2026-09-20T10:00:00", "2026-09-18", "2026-09-18", false],
+    ["周一 9/21 盘前 09:00",      "2026-09-21T09:00:00", "2026-09-18", "2026-09-18", false],
+    ["周一 9/21 开盘后 09:35",    "2026-09-21T09:35:00", "2026-09-21", "2026-09-21", true],
+    ["长假中(国庆 10/1 周四)",    "2026-10-01T10:00:00", "2026-09-30", "2026-09-30", false],
+    ["长假最后一天(10/8 周四)",   "2026-10-08T10:00:00", "2026-09-30", "2026-09-30", false],
+    ["节后首个交易日(10/9 周五)", "2026-10-09T10:00:00", "2026-10-09", "2026-10-09", true],
+  ];
+  for (const c of cases){
+    const s = sessionPure(new Date(c[1]), c[2]);
+    ok("A·" + c[0], s.date === c[3] && s.live === c[4],
+       "展示=" + s.date + " 实时=" + s.live + " 时段=" + s.phaseLabel + "（期望 " + c[3] + "/" + c[4] + "）");
+  }
+
+  // ---- B. 周末回退：展示的必须是周五，且是"已收盘"的完整数据 ----
+  const sat = sessionPure(new Date("2026-09-19T10:00:00"), "2026-09-18");
+  const sun = sessionPure(new Date("2026-09-20T10:00:00"), "2026-09-18");
+  ok("B·周六展示 2026-09-18", sat.date === "2026-09-18", "展示=" + sat.date);
+  ok("B·周日展示 2026-09-18", sun.date === "2026-09-18", "展示=" + sun.date);
+  ok("B·9/18 是周五", new Date(2026,8,18).getDay() === 5,
+     "星期=" + WEEK_CN[new Date(2026,8,18).getDay()]);
+  ok("B·9/19 是周六", new Date(2026,8,19).getDay() === 6, "星期=" + WEEK_CN[new Date(2026,8,19).getDay()]);
+  ok("B·9/20 是周日", new Date(2026,8,20).getDay() === 0, "星期=" + WEEK_CN[new Date(2026,8,20).getDay()]);
+  ok("B·周末判定为非实时", sat.live === false && sun.live === false,
+     "sat=" + sat.live + " sun=" + sun.live);
+  ok("B·周末提示写明非交易日", sat.kind === "nontrading", "kind=" + sat.kind);
+
+  // ---- C. 归档里周五的数据确实是"收盘定稿"（15:00 收尾、240 个点） ----
+  const arch = archiveRead();
+  const fri = arch.days.find(d=>d.date === "2026-09-18") || arch.days[arch.days.length-1];
+  if (fri){
+    ok("C·归档含该交易日", !!fri.date, "date=" + fri.date);
+    ok("C·数据点为完整交易日(≥240)", (fri.bars||0) >= 240, "bars=" + fri.bars);
+    ok("C·末条时刻为 15:00", (fri.ix||[]).length ? fri.ix[fri.ix.length-1][0] === "15:00" : null,
+       "last=" + ((fri.ix||[]).length ? fri.ix[fri.ix.length-1][0] : "无分时"));
+  } else {
+    ok("C·归档（运行时会自动补）", true, "尚无归档，收盘后自动写入");
+  }
+
+  // ---- D. 滚动窗口：35 天 → 只留最近 30 天，且淘汰最早的 ----
+  {
+    const fake = [];
+    for (let k = 1; k <= 35; k++){
+      const dd = new Date(2026, 0, k);
+      fake.push({ date: todayStrOf(dd), bars:240, ix:[], nets:{}, boardIn:[], boardOut:[],
+                  indIn:[], indOut:[], themes:[], events:[], leaders:[], curves:null,
+                  index:{close:3000+k, pct:0.1, chg:1, open:1, high:1, low:1} });
+    }
+    fake.sort((a,b)=> a.date<b.date?-1:1);
+    const evicted = [];
+    while (fake.length > ARCHIVE_LIMIT) evicted.push(fake.shift().date);
+    ok("D·35 条压到 30 条", fake.length === 30, "length=" + fake.length);
+    ok("D·淘汰 5 条", evicted.length === 5, "evicted=" + evicted.join(","));
+    ok("D·淘汰的是最早的 5 天", evicted[0] === todayStrOf(new Date(2026,0,1)),
+       "first_evicted=" + evicted[0]);
+    ok("D·保留最早一天是第 6 天", fake[0].date === todayStrOf(new Date(2026,0,6)),
+       "kept_oldest=" + fake[0].date);
+    ok("D·窗口内仍为升序", fake.every((d,k)=>k===0||fake[k-1].date < d.date), "ok");
+  }
+
+  // ---- E. 幂等：同一天重复归档只留一条 ----
+  {
+    const probe = "1990-01-01";
+    let days = arch.days.filter(d=>d.date !== probe);
+    days.push({date:probe, bars:10});
+    days.push({date:probe, bars:20});
+    const uniq = new Set(days.map(d=>d.date));
+    ok("E·同日重复写入只留一条", uniq.size === days.length - 1,
+       "unique=" + uniq.size + " total=" + days.length);
+  }
+
+  // ---- F. 当前归档健康度 ----
+  ok("F·归档天数 ≤ 30", arch.days.length <= ARCHIVE_LIMIT, "n=" + arch.days.length);
+  ok("F·归档按日期升序", arch.days.every((d,k)=>k===0||arch.days[k-1].date < d.date), "ok");
+  ok("F·归档无重复日期", new Set(arch.days.map(d=>d.date)).size === arch.days.length, "ok");
+
+  const pass = R.filter(r=>r.pass).length;
+  return { total:R.length, pass, fail:R.length-pass, rows:R,
+           archive:{ n:arch.days.length, limit:ARCHIVE_LIMIT,
+                     days:arch.days.map(d=>d.date), last:LAST_ARCHIVE } };
+}
+
+function renderSelftest(){
+  const box = $("selftestBox");
+  if (!box) return;
+  const t = __selftest();
+  let h = `<div style="margin-bottom:8px;font-size:13px">
+    结果：<b class="${t.fail?"dn":"up"}">${t.pass}/${t.total} 通过</b>
+    ${t.fail ? "（"+t.fail+" 项未通过）" : "（全部通过）"}
+    · 当前归档 ${t.archive.n}/${t.archive.limit} 天</div>`;
+  h += `<table><thead><tr><th style="width:330px">用例</th><th style="width:56px">结果</th><th>实际</th></tr></thead><tbody>`;
+  for (const r of t.rows){
+    h += `<tr><td style="font-size:12.5px">${r.name}</td>
+      <td class="${r.pass?"up":"dn"}">${r.pass?"通过":"未过"}</td>
+      <td style="font-size:12px;color:var(--fg2)">${String(r.got).replace(/</g,"&lt;")}</td></tr>`;
+  }
+  h += "</tbody></table>";
+  box.innerHTML = h;
+  return t;
+}
+
+/* =====================================================================
+   全天关键节点榜 —— 把一整天「值得解说」的时刻全部扫一遍
+   ---------------------------------------------------------------------
+   与「实时事件」的区别：
+     实时事件   = 只看当前这一刻，判断"现在发生了什么"
+     关键节点榜 = 从头扫到尾（默认每 5 分钟一个采样点），把一整天的事件按题材去重，
+                  回答"今天一整天，最值得记住的几个时刻是什么"
+   —— 这正是第一版报告里那一节的能力。
+
+   ★★ v1.2.5：排列口径 = **按时间先后（早→晚）**，不是按强度。
+     与 Python 版 `salience.timeline_summary` 的修复完全同源 —— 两边必须一致，
+     否则「看板里的榜」与「报告里的榜」顺序不同，用户会以为是两个功能。
+     旧写法 `.sort((a,b) => b.strength - a.strength)` 时间完全跳跃：
+         09:42 → 09:45 → 10:15 → 09:51 → 09:48 → 11:00 …
+     「全天」二字决定了它是一条时间轴；强度本来就是独立一列，不需要靠行序表达。
+   ===================================================================== */
+let KEYNODE_CACHE = { key: "", data: [] };
+
+/* 'HH:MM' → 分钟数（HH*60+MM），跨午休天然单调（690 < 781）。
+   ★ 不能用字符串比较：'9:35' > '10:00' 在字典序下成立（'9' > '1'）。
+   ★ 也不用画图那套「分钟序号」（09:31=0…15:00=239，午休不占格）——
+     那是为横轴定位设计的，排序要的是真实钟点先后。
+   解析不出返回 null → 排到队尾（不当成 0 挤到最前）。 */
+function timeKey(hm){
+  if (typeof hm !== "string") return null;
+  const m = hm.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = +m[1], mi = +m[2];
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+}
+
+function keyNodes(i, step = 5, minStrength = 1.5, limit = 24){
+  const key = [ST.date, ST.mode, ST.histDate || "", i, step, limit].join("|");
+  if (KEYNODE_CACHE.key === key) return KEYNODE_CACHE.data;
+
+  // 历史回看时优先用归档里存好的节点（归档时用完整数据算的，比拿平线重算准）
+  if (ST.mode === "history" && ST.histRec && ST.histRec.nodes && ST.histRec.nodes.length){
+    // ★ v1.2.5：归档数据可能是**修复前**存的（当时按强度排），
+    //   读出来必须重新按时间摆一遍，否则旧归档在界面上仍是乱的。
+    const fixed = ST.histRec.nodes.slice().sort(rowByTime);
+    KEYNODE_CACHE = { key, data: fixed };
+    return KEYNODE_CACHE.data;
+  }
+
+  const codes = Array.from(ST.okCodes).filter(c => ST.values[c] && ST.kinds[c] && aligned(c));
+  const pool = [];
+  for (let t = 5; t <= i; t += step){
+    // persistWin 传 1：扫全天的目的是找"变化"，不需要"持续在榜"这类静态事件，
+    // 同时把 20 次排序省掉，整个扫描快约 4 倍。
+    const rows = analyze(codes, t, 5, 10, 1, 20);
+    for (const e of detectEvents(rows, 3, t)){
+      if (e.strength >= minStrength) pool.push({ time: ST.axis[t], idx: t, ...e });
+    }
+  }
+  // ① 先选：同一题材只留最强的一条，再按强度取前 limit 条
+  const best = new Map();
+  for (const e of pool){
+    const cur = best.get(e.name);
+    if (!cur || cur.strength < e.strength) best.set(e.name, e);
+  }
+  const picked = Array.from(best.values())
+                       .sort((a, b) => b.strength - a.strength)
+                       .slice(0, limit);
+  // ② 再摆：按时间升序（早→晚）。★ 与 Python 版 `topn` 语义一致 ——
+  //    "选谁"用强度，"怎么摆"用时间，两步分工不能合并。
+  const arr = picked.sort(rowByTime);
+  KEYNODE_CACHE = { key, data: arr };
+  return arr;
+}
+
+/* 三层排序键：时间 → 面板行序 → 强度降序。
+   与 Python 版 `_key()` 同构，保证两边排列结果逐行一致。 */
+function rowByTime(a, b){
+  const ka = timeKey(a.time), kb = timeKey(b.time);
+  if (ka === null && kb === null) return (a.idx || 0) - (b.idx || 0);
+  if (ka === null) return 1;                 // 不可解析 → 队尾
+  if (kb === null) return -1;
+  return (ka - kb) || ((a.idx || 0) - (b.idx || 0))
+                    || (b.strength - a.strength);
+}
+
+function renderKeyNodes(){
+  const box = $("keynodes");
+  if (!box) return;
+  const i = ST.axis.length - 1;
+  if (i < 6){ box.innerHTML = ""; return; }
+  const list = keyNodes(i, 5, 1.5, 24);
+  const sub = $("knSub");
+  if (sub){
+    sub.textContent = list.length
+      ? `全 ${ST.axis.length} 个分钟点逐段扫描（每 5 分钟一个采样点），按强度排序、同一题材只留最强的一条；`
+        + `共 ${list.length} 条。与「实时事件」不同，这里看的是一整天。`
+      : "数据点不足，暂无法生成";
+  }
+  if (!list.length){ box.innerHTML = ""; return; }
+
+  const cls = t => (t.includes("失血") || t.includes("流出") || t.includes("撤离")) ? "cold"
+                 : (t.includes("加速流入") || t.includes("新晋") || t.includes("回流")) ? "hot" : "";
+  // 卡片式排列（原先是 5 列宽表格，手机上「说明」列会被压成一字一行）
+  const mx = list[0].strength || 1;
+  let h = `<div class="knList">`;
+  for (const e of list){
+    h += `<div class="knCard">
+      <div class="knTop">
+        <span class="d">${e.time}</span>
+        <span class="tg ${cls(e.type)}">${e.type}</span>
+        <span class="knName" title="${e.name}">${e.name}</span>
+        <span class="knStr">${fmt(e.strength,1)}</span>
+      </div>
+      <div class="knDesc">${e.desc}</div>
+      <div class="bar" style="width:${Math.max(4, e.strength/mx*100)}%;background:var(--acc)"></div>
+    </div>`;
+  }
+  h += `</div>`;
+  box.innerHTML = h;
+}
+
+/* =====================================================================
+   阶段对比 —— 一天切成六个时点，看每个时点辨识度最高的题材
+   （对应第一版报告里的「阶段对比」模块）
+   ===================================================================== */
+let STAGE_CACHE = { key: "", data: null };
+const STAGE_MARKS = ["09:45", "10:30", "11:30", "13:30", "14:15", "15:00"];
+
+function stageData(){
+  const key = [ST.date, ST.mode, ST.histDate || "", ST.axis.length].join("|");
+  if (STAGE_CACHE.key === key) return STAGE_CACHE.data;
+  // 历史回看优先用归档里存好的（归档时用完整数据算的，平线重算会失真）
+  if (ST.mode === "history" && ST.histRec && ST.histRec.stages && ST.histRec.stages.length){
+    STAGE_CACHE = { key, data: ST.histRec.stages };
+    return STAGE_CACHE.data;
+  }
+  const out = [];
+  const codes = Array.from(ST.okCodes).filter(c => aligned(c) && ST.kinds[c] === "concept");
+  for (const m of STAGE_MARKS){
+    const i = ST.axisIdx[m];
+    if (i === undefined || i < 3) continue;          // 盘中尚未到达的时点跳过
+    const arr = codes.map(c => ({ n: ST.names[c], net: +valAt(c, i).toFixed(2) }));
+    arr.sort((a, b) => b.net - a.net);
+    out.push({ t: m, top: arr.slice(0, 6), bottom: arr.slice(-6).reverse() });
+  }
+  STAGE_CACHE = { key, data: out };
+  return out;
+}
+
+function drawStages(){
+  const cv = $("cStage");
+  if (!cv) return;
+  const data = stageData();
+  const box = cv.parentElement;
+  if (!data.length){ cv.style.height = "0px"; return; }
+  // 手机上最多 2 列：3 列会把每格压到约 98px，名称/条形/数值三段根本排不开
+  const nw = (window.innerWidth < 820);
+  const cols = Math.min(nw ? 2 : 3, data.length);
+  const rows = Math.ceil(data.length / cols);
+  const PADL = 8, PADR = 8, PADT = 6, GAP = nw ? 12 : 10, TITLE = 22,
+        ROWH = nw ? 18 : 17, ROWN = 12;
+  const cellH = TITLE + ROWN * ROWH + 16;
+  const cellWcss = Math.max(300, ((cv.clientWidth || 1100) - PADL - PADR - GAP * (cols - 1)) / cols);
+  const H = PADT + rows * cellH + (rows - 1) * GAP + 6;
+  const { ctx, w, h } = fitCanvas(cv, H);
+  const p = P();
+  ctx.clearRect(0, 0, w, h); ctx.fillStyle = p.chart; ctx.fillRect(0, 0, w, h);
+
+  const cellW = (w - PADL - PADR - GAP * (cols - 1)) / cols;
+  ctx.textBaseline = "middle";
+
+  data.forEach((st, k) => {
+    const cx = PADL + (k % cols) * (cellW + GAP);
+    const cy = PADT + Math.floor(k / cols) * (cellH + GAP);
+
+    // 单元格底
+    ctx.fillStyle = p.bg3 || "#1a2130"; ctx.globalAlpha = .35;
+    roundRect(ctx, cx, cy, cellW, cellH, 6); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // 标题
+    // 时刻 + 说明：说明的位置按时刻实际宽度算，避免"09:45辨识度最高的题材"贴在一起
+    ctx.fillStyle = p.fg; ctx.font = "700 12.5px system-ui"; ctx.textAlign = "left";
+    ctx.fillText(st.t, cx + 8, cy + 13);
+    const tw = ctx.measureText(st.t).width;
+    ctx.fillStyle = p.fg3; ctx.font = "10.5px system-ui";
+    ctx.fillText("辨识度最高的题材", cx + 8 + tw + 9, cy + 13.5);
+
+    const rowsAll = st.top.concat(st.bottom);
+    const mx = Math.max.apply(null, rowsAll.map(r => Math.abs(r.net)).concat([1]));
+    // 三段宽度按格子宽度比例分配，并给条形留出确定的空间。
+    // ★ 旧写法 `Math.max(40, cellW - nameW - valW - 22)` 在窄格下算出负值后
+    //   被强行抬到 40，条形会越过数值区叠在一起 —— 这正是截图里
+    //   「国产芯片+229.91」被红色色块盖住的原因。这里改成按比例取，
+    //   条形最小 6px，保证「名称右边界 < 条形左边界 < 条形右边界 < 数值左边界」。
+    // 名称列下限 56px：「半导体概念」在 10.5px 下约 53px，低于此会被截成「半导体…」
+    const nameW = Math.min(96, Math.max(56, cellW * 0.26));
+    const valW  = Math.min(56, Math.max(36, cellW * 0.17));
+    const barArea = Math.max(6, cellW - nameW - valW - 24);
+
+    rowsAll.forEach((r, j) => {
+      const y = cy + TITLE + j * ROWH + ROWH / 2;
+      const isIn = j < 6;
+      const col = r.net >= 0 ? p.up : p.dn;
+      // 分隔线（流入/流出之间）
+      if (j === 6){
+        ctx.strokeStyle = p.grid; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cx + 8, y - ROWH / 2); ctx.lineTo(cx + cellW - 8, y - ROWH / 2); ctx.stroke();
+      }
+      // 名称
+      ctx.fillStyle = p.fg2; ctx.font = "10.5px system-ui"; ctx.textAlign = "right";
+      ctx.fillText(fitText(ctx, r.n, nameW), cx + 8 + nameW, y);
+      // 条
+      const bw = Math.max(2, Math.abs(r.net) / mx * barArea);
+      ctx.fillStyle = col; ctx.globalAlpha = .9;
+      roundRect(ctx, cx + 10 + nameW, y - 5, bw, 10, 3); ctx.fill();
+      ctx.globalAlpha = 1;
+      // 数值
+      ctx.fillStyle = col; ctx.font = "10px system-ui"; ctx.textAlign = "right";
+      ctx.fillText(sgn(r.net), cx + cellW - 8, y);
+    });
+  });
+}
+
+function renderStages(){
+  const cv = $("cStage");
+  if (!cv) return;
+  const sub = $("stageSub");
+  const data = stageData();
+  if (sub){
+    sub.textContent = data.length
+      ? `把一天切成 ${data.length} 个时点，每格列出该时点辨识度最高的 6 个流入 / 6 个流出题材（上半段红=流入，下半段绿=流出）`
+      : "数据点不足，暂无法生成";
+  }
+  drawStages();
+}
+
+/* =====================================================================
+   数据校验与清洗层（绘制前统一执行）
+   ---------------------------------------------------------------------
+   为什么需要它：实测发现两个真实问题，都会在图上画成"垂直断崖"——
+     (A) 5 秒快照接口会间歇性返回"滞后数分钟的旧值"（同一数值精确复现），
+         与实时值交替出现；而 X 轴在两次 K 线刷新之间不前进，
+         于是 ±10 亿的来回摆动被画在同一个 x 位置上 → 竖线。
+     (B) 时间轴只在 K 线刷新时增长，快照却把"当前值"写进"上一分钟的槽位"，
+         导致该槽位被逐步抬高；轴一延长，这段错误水平被前向填充成平台，
+         再被真实值截断 → 台阶。
+   处理原则：**修正而不是丢弃**——尖刺用邻点插值、阶跃用线性爬坡重分配，
+   两端端点与总量都保留，不改变真实趋势与量级。
+   ===================================================================== */
+const CLEAN_CFG = {
+  enabled: true,            // 总开关
+  guardStale: true,         // 快照滞后护栏（治 (A)）
+  staleRatio: 0.30,         // 触发"整轮丢弃"的异常板块占比
+  liveJumpYi: 8,            // 单轮快照里单板块允许的最大变化（亿）
+  minJumpYi: 5,             // 进入异常检测的最小幅度（亿）
+  madK: 12,                 // 自适应阈值：允许的最大值 = max(minJumpYi, madK × 自身MAD)
+  maxJumpYi: 60,            // 绝对上限（亿），超过一律判异常
+  spikeRevRatio: 0.35,      // 反向回撤 ≥ 该比例 → 判为"单点尖刺"
+  stepRamp: 6,              // 阶跃/重置：把跳变量摊回前 N 分钟
+  resetYi: 45,              // 累计值重置判定（亿）
+};
+const CLEAN_LOG = [];       // 异常点清单
+const CLEAN_MAXLOG = 400;
+let CLEAN_STATS = { scanned:0, anomalies:0, rejectedSnapshots:0, lastWash:"" };
+
+function cleanLogPush(rec){
+  rec.t = new Date().toTimeString().slice(0,8);
+  CLEAN_LOG.unshift(rec);
+  if (CLEAN_LOG.length > CLEAN_MAXLOG) CLEAN_LOG.length = CLEAN_MAXLOG;
+}
+
+/* ---------- 工具：中位数 / MAD ---------- */
+function median(arr){
+  if (!arr.length) return 0;
+  const a = arr.slice().sort((x,y)=>x-y), m = a.length>>1;
+  return a.length % 2 ? a[m] : (a[m-1]+a[m])/2;
+}
+function madOf(arr){
+  if (arr.length < 3) return 0;
+  const med = median(arr);
+  return median(arr.map(x=>Math.abs(x-med)));
+}
+
+/* =====================================================================
+   一、单条累计曲线的清洗（就地修正，返回修正后的数组）
+   ===================================================================== */
+function cleanSeries(values, code, name){
+  const n = values.length;
+  const out = values.slice();
+  if (n < 5) return out;
+  const cfg = CLEAN_CFG;
+  const found = [];
+
+  // 1) 缺失值：用前值填充（记录）
+  for (let i=0;i<n;i++){
+    const v = out[i];
+    if (v === null || v === undefined || !isFinite(v)){
+      out[i] = i>0 ? out[i-1] : 0;
+      found.push({ time:ST.axis[i]||String(i), code, name, jump:0, kind:"缺失值",
+                   action:"用前一分钟的值填充", before:v, after:+out[i].toFixed(2) });
+    }
+  }
+
+  // 2) 增量与自适应阈值
+  const diffs = [];
+  for (let i=1;i<n;i++) diffs.push(out[i]-out[i-1]);
+  const mad = madOf(diffs);
+  const thr = Math.min(cfg.maxJumpYi, Math.max(cfg.minJumpYi, cfg.madK * mad));
+
+  // 3) 扫描：尖刺 / 阶跃 / 重置
+  for (let i=1;i<n;i++){
+    const d = out[i]-out[i-1];
+    if (Math.abs(d) <= thr) continue;
+    const prev = out[i-1], cur = out[i];
+
+    // (a) 单点尖刺：下一步立刻反向回撤
+    if (i < n-1){
+      const dNext = out[i+1]-out[i];
+      if (d * dNext < 0 && Math.abs(dNext) >= Math.abs(d)*cfg.spikeRevRatio){
+        const fixed = (prev + out[i+1]) / 2;
+        out[i] = fixed;
+        found.push({ time:ST.axis[i]||String(i), code, name,
+          jump:+d.toFixed(2), kind:"单点尖刺",
+          action:`用前后邻点线性插值 ${prev.toFixed(2)}/${out[i+1].toFixed(2)} → ${fixed.toFixed(2)}`,
+          before:+cur.toFixed(2), after:+fixed.toFixed(2) });
+        continue;
+      }
+    }
+
+    // (b) 累计值重置 / 阶跃：把跳变量摊回前 stepRamp 分钟（保留两端端点）
+    const k = Math.min(cfg.stepRamp, i);
+    if (k >= 2){
+      const base = out[i-k], top = out[i];
+      for (let m=1; m<k; m++) out[i-k+m] = base + (top-base)*m/k;
+      const isReset = Math.abs(d) > cfg.resetYi;
+      found.push({ time:ST.axis[i]||String(i), code, name, jump:+d.toFixed(2),
+        kind: isReset ? "疑似累计值重置" : "阶跃跳变",
+        action:`把 ${d.toFixed(2)} 亿摊回前 ${k} 分钟（保持端点与总量不变）`,
+        before:+cur.toFixed(2), after:+cur.toFixed(2) });
+    } else {
+      out[i] = out[i-1] + Math.sign(d)*thr;
+      found.push({ time:ST.axis[i]||String(i), code, name, jump:+d.toFixed(2),
+        kind:"越界跳变", action:`截断到阈值 ±${thr.toFixed(2)} 亿`,
+        before:+cur.toFixed(2), after:+out[i].toFixed(2) });
+    }
+  }
+
+  if (found.length){
+    for (const f of found){
+      if (!f.code) f.code = code;
+      if (!f.name) f.name = name;
+      CLEAN_STATS.anomalies++;
+      cleanLogPush(f);
+    }
+  }
+  return out;
+}
+
+/* 全量清洗：就地修正 ST.values，并记录统计 */
+function washAll(){
+  if (!CLEAN_CFG.enabled){ CLEAN_STATS.scanned = 0; return; }
+  if (ST.axis.length < 5) return;
+  if (CLEAN_STATS.washKey === ST.date+"|"+ST.axis.length+"|"+ST.mode+"|"+(ST.histDate||"")) return;
+  let changed = 0;
+  for (const c of ST.okCodes){
+    const arr = ST.values[c];
+    if (!arr || arr.length !== ST.axis.length) continue;
+    CLEAN_STATS.scanned++;
+    const fixed = cleanSeries(arr, c, ST.names[c] || c);
+    let diff = false;
+    for (let i=0;i<arr.length;i++) if (arr[i] !== fixed[i]){ diff = true; break; }
+    if (diff){ ST.values[c] = fixed; changed++; }
+  }
+  CLEAN_STATS.washKey = ST.date+"|"+ST.axis.length+"|"+ST.mode+"|"+(ST.histDate||"");
+  CLEAN_STATS.lastWash = "已清洗 " + CLEAN_STATS.scanned + " 条曲线，修正 " + changed + " 条";
+}
+
+/* =====================================================================
+   二、快照滞后护栏（治根因 A）
+   ---------------------------------------------------------------------
+   一个后端分片返回滞后数据时，几乎"所有板块"会朝同一方向回退；
+   而真实行情不会让 400 个板块整齐同步回退。据此识别整轮滞后快照。
+   ===================================================================== */
+function snapshotIsStale(snap, nowHM){
+  if (!CLEAN_CFG.enabled || !CLEAN_CFG.guardStale || !ST.snapPrev) return false;
+  const prev = ST.snapPrev;
+  let checked = 0, moved = 0, up = 0, down = 0;
+  const moves = [];
+  for (const c in snap){
+    if (!(c in prev)) continue;
+    const d = snap[c][1] - prev[c];
+    checked++;
+    moves.push(d);
+    if (Math.abs(d) > CLEAN_CFG.liveJumpYi){ moved++; if (d>0) up++; else down++; }
+  }
+  if (checked < 50) return false;
+  const ratio = moved / checked;
+  const oneSided = Math.max(up, down) / Math.max(1, moved);
+  const medMove = Math.abs(median(moves));
+  const stale = (ratio > CLEAN_CFG.staleRatio) && (oneSided > 0.9) && (medMove > CLEAN_CFG.liveJumpYi * 0.6);
+  if (stale){
+    CLEAN_STATS.rejectedSnapshots++;
+    cleanLogPush({ time: nowHM || "—", code:"—", name:"【整轮快照】", jump:+(medMove).toFixed(2),
+      kind:"快照整体滞后", action:`${(ratio*100).toFixed(0)}% 的板块同时朝同一方向回退，判定为滞后快照，整轮丢弃（保留上一轮值）`,
+      before:"—", after:"—" });
+  }
+  return stale;
+}
+function snapshotCommit(snap){
+  if (!ST.snapPrev) ST.snapPrev = Object.create(null);
+  for (const c in snap) ST.snapPrev[c] = snap[c][1];
+}
+
+/* =====================================================================
+   三、时间轴推进（治根因 B）
+   让 X 轴始终跟到"当前分钟"，避免末槽挂着旧时间戳、
+   也避免下次伸长时把错误水平前向填充成平台。
+   ===================================================================== */
+function tradingMinutesBetween(fromHM, toHM){
+  const toM = s => { const [h,m]=s.split(":").map(Number); return h*60+m; };
+  const out = [];
+  const a = toM(fromHM), b = toM(toHM);
+  for (let t=a+1; t<=b; t++){
+    const h = Math.floor(t/60), m = t%60;
+    const inAM = (t >= 9*60+31 && t <= 11*60+30);
+    const inPM = (t >= 13*60+1 && t <= 15*60);
+    if (inAM || inPM) out.push(String(h).padStart(2,"0")+":"+String(m).padStart(2,"0"));
+  }
+  return out;
+}
+function axisEnsureTo(nowHM){
+  if (!nowHM || !ST.axis.length) return false;
+  const last = ST.axis[ST.axis.length-1];
+  if (nowHM <= last) return false;
+  const add = tradingMinutesBetween(last, nowHM);
+  if (!add.length) return false;
+  ensureAxis(add);
+  return true;
+}
+
+/* =====================================================================
+   四、面板渲染
+   ===================================================================== */
+function renderCleanPanel(){
+  const box = $("cleanBox");
+  if (!box) return;
+  renderCleanCompare();
+  const cfgRow = $("cleanCfg");
+  if (cfgRow && !cfgRow.dataset.built){
+    cfgRow.dataset.built = "1";
+    const items = [
+      ["enabled","启用清洗","checkbox"],
+      ["guardStale","快照滞后护栏","checkbox"],
+      ["minJumpYi","最小检测幅度(亿)","number"],
+      ["liveJumpYi","单轮快照最大变化(亿)","number"],
+      ["madK","自适应倍数(×MAD)","number"],
+      ["maxJumpYi","绝对上限(亿)","number"],
+      ["resetYi","累计值重置判定(亿)","number"],
+      ["stepRamp","阶跃摊回分钟数","number"],
+    ];
+    cfgRow.innerHTML = items.map(([k,label,type])=>{
+      const v = CLEAN_CFG[k];
+      return type === "checkbox"
+        ? `<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--fg2)">
+             <input type="checkbox" data-cfg="${k}" ${v?"checked":""}/>${label}</label>`
+        : `<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--fg2)">
+             ${label}
+             <input type="number" data-cfg="${k}" value="${v}" step="1" min="0"
+                    style="width:64px;background:var(--bg3);border:1px solid var(--line);color:var(--fg);
+                           border-radius:6px;padding:2px 6px;font-size:12.5px"/></label>`;
+    }).join("");
+    cfgRow.querySelectorAll("[data-cfg]").forEach(el=>{
+      el.onchange = ()=>{
+        const k = el.getAttribute("data-cfg");
+        CLEAN_CFG[k] = (el.type === "checkbox") ? el.checked : Number(el.value);
+        try{ localStorage.setItem("flowlive_clean_cfg", JSON.stringify(CLEAN_CFG)); }catch(e){}
+        CLEAN_STATS.washKey = "";           // 强制重算
+        ST.snapPrev = null;
+        ST.version++;
+        render();
+      };
+    });
+  }
+
+  const n = CLEAN_LOG.length;
+  const stat = $("cleanStat");
+  if (stat){
+    stat.textContent =
+      `已扫描 ${CLEAN_STATS.scanned} 条曲线 · 修正 ${CLEAN_STATS.anomalies} 处异常 · `
+      + `整轮丢弃滞后快照 ${CLEAN_STATS.rejectedSnapshots} 次 · 挂起待确认值 ${CLEAN_STATS.heldValues||0} 个 · 自适应阈值 ±${currentThr().toFixed(1)} 亿`
+      + (CLEAN_STATS.lastWash ? " · " + CLEAN_STATS.lastWash : "")
+      + (CLEAN_CFG.enabled ? "" : " · 清洗已关闭（当前显示原始数据）");
+  }
+  if (!n){
+    box.innerHTML = `<div style="color:var(--fg3);font-size:12.5px">
+      暂未发现异常。校验项：时间轴等距性与重复、缺失值、单点尖刺、阶跃跳变、累计值重置、量级越界、整轮快照滞后。</div>`;
+    return;
+  }
+  let h = `<table><thead><tr>
+    <th style="width:62px">时刻</th><th style="width:120px">板块</th>
+    <th style="width:88px">异常类型</th><th class="n" style="width:78px">跳变幅度</th>
+    <th style="width:78px">修正前</th><th style="width:78px">修正后</th>
+    <th>处理方式</th></tr></thead><tbody>`;
+  for (const r of CLEAN_LOG.slice(0,60)){
+    const cls = r.kind.includes("滞后") ? "cold" : (r.kind.includes("重置") ? "hot" : "");
+    h += `<tr>
+      <td class="d">${r.time}</td>
+      <td class="nm" title="${r.name}">${r.name}</td>
+      <td><span class="tg ${cls}">${r.kind}</span></td>
+      <td class="n ${r.jump>0?"up":"dn"}">${typeof r.jump==="number" ? sgn(r.jump) : r.jump}</td>
+      <td class="n">${typeof r.before==="number" ? fmt(r.before,2) : r.before}</td>
+      <td class="n">${typeof r.after==="number" ? fmt(r.after,2) : r.after}</td>
+      <td style="color:var(--fg2);font-size:12px">${r.action}</td></tr>`;
+  }
+  h += "</tbody></table>";
+  if (n > 60) h += `<div style="color:var(--fg3);font-size:12px;margin-top:6px">仅显示最近 60 条，共 ${n} 条</div>`;
+  box.innerHTML = h;
+}
+
+function currentThr(){
+  // 展示用的自适应阈值（以当前画面上第一条可用曲线估算）
+  const c = Array.from(ST.okCodes)[0];
+  if (!c || !ST.values[c] || ST.values[c].length < 5) return CLEAN_CFG.minJumpYi;
+  const a = ST.values[c], d = [];
+  for (let i=1;i<a.length;i++) d.push(a[i]-a[i-1]);
+  return Math.min(CLEAN_CFG.maxJumpYi, Math.max(CLEAN_CFG.minJumpYi, CLEAN_CFG.madK * madOf(d)));
+}
+
+/* 修复前后对比：对整个画面算一次"最大相邻跳变" */
+function cleanCompare(){
+  const codes = Array.from(ST.okCodes);
+  let before = 0, beforeAt = "", beforeName = "";
+  // "修复前"取两者较大者：
+  //   ① 事后修补日志里最大的那条
+  //   ② 被源头护栏直接挡下、从未写进曲线的最大跳变（否则会漏掉最大功臣）
+  let worst = null;
+  for (const r of CLEAN_LOG){
+    if (typeof r.jump !== "number") continue;
+    if (!worst || Math.abs(r.jump) > Math.abs(worst.jump)) worst = r;
+  }
+  if (Math.abs(CLEAN_STATS.maxHeldJump || 0) > Math.abs(worst ? worst.jump : 0)){
+    worst = { jump: CLEAN_STATS.maxHeldJump, name: CLEAN_STATS.maxHeldName,
+              time: CLEAN_STATS.maxHeldAt };
+  }
+  let after = 0, afterAt = "", afterName = "";
+  for (const c of codes){
+    // ★ 必须与 washAll 同一口径：只有"长度与时间轴一致"的曲线才会被清洗，
+    //   否则拿一条被跳过清洗的曲线来算 after，会出现 after > before 的错觉。
+    if (!aligned(c)) continue;
+    const a = ST.values[c];
+    if (a.length < 3) continue;
+    for (let i=1;i<a.length;i++){
+      const d = Math.abs(a[i]-a[i-1]);
+      if (d > after){ after = d; afterAt = ST.axis[i]; afterName = ST.names[c]; }
+    }
+  }
+  if (worst){ before = worst.jump; beforeAt = worst.time; beforeName = worst.name; }
+  return { before, beforeAt, beforeName, after, afterAt, afterName };
+}
+
+/* =====================================================================
+   龙头领先反应 —— 在榜板块自动标注「领涨龙头 / 领跌龙头」
+   ---------------------------------------------------------------------
+   判定主线：龙头不是"净额最大"，而是**在板块拐点上先动手的那只**。
+     ① 从板块的分钟累计资金流里识别拐点（点火 / 跳水）
+     ② 对每只候选成分股，找它在拐点窗口内"同向首次显著反应"的分钟
+     ③ 领先分钟 = 板块拐点分钟 − 个股反应分钟（>0 = 个股领先）
+     ④ 按「领先幅度 × 拐点强度」为主、辅以先手率/响应幅度/自身净额，给龙头打分
+     ⑤ 点火事件上得分最高 = 领涨龙头；跳水事件上得分最高 = 领跌龙头
+   ===================================================================== */
+const LEADER_CFG = {
+  enabled: true,
+  maxSectors: 36,        // 最多分析多少个在榜板块（控制请求量）
+  candPerSector: 8,      // 每个板块取多少只候选（按主力净额 + 跌幅取并集）
+  turnK: 3.0,            // 拐点阈值 = k × MAD(板块平滑增量)
+  turnMinYi: 0.8,        // 拐点阈值下限（亿/分）
+  mergeGap: 4,           // 相邻同类拐点合并间隔（分钟）
+  leadWin: 10,           // 向前搜索领先反应的窗口（分钟）
+  reactK: 3.0,           // 个股反应阈值 = k × MAD(个股增量)
+  reactMinYi: 0.03,      // 个股反应阈值下限（亿/分）
+  decayWin: 6,           // 领先幅度计分上限（分钟）
+  wLead: 1.8, wHit: 1.0, wResp: 0.7, wSize: 0.5,
+};
+const LEADER = { cache: Object.create(null), running: false, updated: "", stats:{} };
+
+/* ---------- 工具 ---------- */
+function lMedian(a){ if(!a.length) return 0; const s=a.slice().sort((x,y)=>x-y), m=s.length>>1;
+  return s.length%2 ? s[m] : (s[m-1]+s[m])/2; }
+function lMAD(a){ if(a.length<3) return 0; const m=lMedian(a); return lMedian(a.map(x=>Math.abs(x-m))); }
+function stockSecid(code){
+  return (code[0]==="6" || code[0]==="9" || code[0]==="5" ? "1." : "0.") + code;
+}
+
+/* ---------- 抓取 ---------- */
+async function fetchBoardMembers(bk){
+  const j = await q(`/api/qt/clist/get?pn=1&pz=${LEADER_CFG.candPerSector*3}&po=1&np=1&fltt=2&invt=2&fid=f62&fs=b:${bk}&fields=f12,f14,f3,f62,f184,f6`);
+  const d = ((j&&j.data&&j.data.diff)||[]);
+  return d.map(x=>({ code:x.f12, name:x.f14, pct:x.f3, net:(x.f62||0)/1e8,
+                     share:x.f184, amount:x.f6 }));
+}
+async function fetchStockFlow(code){
+  const j = await q(`/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid=${stockSecid(code)}&fields1=f1,f2,f3,f7&fields2=f51,f52&ut=${CFG.ut}`);
+  const kl = ((j&&j.data&&j.data.klines)||[]);
+  const out = [];
+  for (const s of kl){ const p=s.split(","); if(p.length>=2) out.push([p[0].slice(-5), +p[1]/1e8]); }
+  return out;
+}
+
+/* ---------- 拐点识别（合并同类相邻拐点） ---------- */
+function detectTurns(hms, V){
+  const cfg = LEADER_CFG, n = V.length;
+  if (n < 10) return [];
+  const dv = [0]; for (let i=1;i<n;i++) dv.push(V[i]-V[i-1]);
+  const sm = []; for (let i=0;i<n;i++){ const lo=Math.max(0,i-2); let s=0;
+    for (let k=lo;k<=i;k++) s+=dv[k]; sm.push(s/(i-lo+1)); }
+  const thr = Math.max(cfg.turnMinYi, cfg.turnK * lMAD(sm));
+  const raw = [];
+  for (let i=6;i<n;i++){
+    let lo=Infinity, hi=-Infinity;
+    for (let k=i-5;k<i;k++){ if(sm[k]<lo)lo=sm[k]; if(sm[k]>hi)hi=sm[k]; }
+    if (sm[i] >= thr && lo <= thr*0.2) raw.push({ i, dir:"点火", mag:sm[i] });
+    else if (sm[i] <= -thr && hi >= -thr*0.2) raw.push({ i, dir:"跳水", mag:sm[i] });
+  }
+  // 合并同类且间隔 <= mergeGap 的拐点：取最早分钟为事件时刻，取峰值幅度为强度
+  const out = [];
+  for (const t of raw){
+    const last = out[out.length-1];
+    if (last && last.dir===t.dir && t.i-last.end <= cfg.mergeGap){
+      last.end = t.i;
+      if (Math.abs(t.mag) > Math.abs(last.mag)) last.mag = t.mag;
+    } else out.push({ i:t.i, end:t.i, dir:t.dir, mag:t.mag });
+  }
+  return out.map(t=>({ i:t.i, dir:t.dir, mag:t.mag, time:hms[t.i] }));
+}
+
+/* ---------- 个股在拐点上的反应 ---------- */
+function stockReaction(kHms, kV, turn){
+  const cfg = LEADER_CFG;
+  const idx = kHms.indexOf(turn.time);
+  if (idx < 0) return null;
+  const kd = [0]; for (let i=1;i<kV.length;i++) kd.push(kV[i]-kV[i-1]);
+  const kthr = Math.max(cfg.reactMinYi, cfg.reactK * lMAD(kd));
+  const lo = Math.max(1, idx-cfg.leadWin), hi = Math.min(kd.length-1, idx+2);
+  for (let t=lo;t<=hi;t++){
+    const d = kd[t];
+    if (turn.dir==="点火" && d >= kthr) return { lead: idx-t, reactAt: kHms[t], mag:d };
+    if (turn.dir==="跳水" && d <= -kthr) return { lead: idx-t, reactAt: kHms[t], mag:d };
+  }
+  return null;
+}
+
+/* ---------- 板块龙头分析 ---------- */
+function scoreLeaders(board, turns, stocks){
+  const cfg = LEADER_CFG;
+  const byDir = { "点火": [], "跳水": [] };
+  for (const dir of ["点火","跳水"]){
+    const evs = turns.filter(t=>t.dir===dir);
+    if (!evs.length) continue;
+    const cands = [];
+    for (const s of stocks){
+      if (!s.flow || !s.flow[1] || s.flow[1].length < 10) continue;   // flow = [时刻[], 数值[]]
+      const [kh, kv] = s.flow;
+      let leadSum = 0, hits = 0, respSum = 0, miss = 0;
+      const detail = [];
+      for (const ev of evs){
+        const r = stockReaction(kh, kv, ev);
+        if (!r){ miss++; continue; }
+        const lead = Math.max(0, Math.min(r.lead, cfg.decayWin));
+        const w = Math.min(1.5, Math.abs(ev.mag) / cfg.turnMinYi / 3);
+        leadSum += lead * w;
+        respSum += Math.abs(r.mag);
+        if (r.lead > 0) hits++;
+        detail.push({ t:ev.time, dir:ev.dir, lead:r.lead, at:r.reactAt });
+      }
+      const n = evs.length;
+      if (!detail.length) continue;
+      cands.push({ code:s.code, name:s.name, pct:s.pct, net:s.net, share:s.share,
+                   leadSum, hits, miss, respSum, n, detail,
+                   hitRate: hits/n, avgLead: leadSum/Math.max(1,detail.length) });
+    }
+    if (!cands.length) continue;
+    const maxLead = Math.max(...cands.map(c=>c.leadSum), 0.001);
+    const maxResp = Math.max(...cands.map(c=>c.respSum), 0.001);
+    const maxSize = Math.max(...cands.map(c=>Math.abs(c.net)), 0.001);
+    for (const c of cands){
+      c.score = cfg.wLead*(c.leadSum/maxLead) + cfg.wHit*c.hitRate
+              + cfg.wResp*Math.min(1, c.respSum/maxResp) + cfg.wSize*Math.min(1, Math.abs(c.net)/maxSize);
+    }
+    cands.sort((a,b)=>b.score-a.score);
+    byDir[dir] = cands.slice(0, 3);
+  }
+  return { up: byDir["点火"], down: byDir["跳水"] };
+}
+
+/* ---------- 对外：拿一个板块的龙头（带缓存） ---------- */
+function leaderOf(bk){
+  const rec = LEADER.cache[bk];
+  if (!rec || !rec.ok) return null;
+  return rec;
+}
+
+async function analyzeSectorLeader(bk, name, sectorSeries){
+  const cfg = LEADER_CFG;
+  // 数据不足时跳空
+  if (!sectorSeries || sectorSeries.length < 15) return null;
+  const members = await fetchBoardMembers(bk);
+  if (!members.length) return null;
+  // 候选 = 主力净额前 N ∪ 跌幅前 N（领跌龙头往往不在净额榜前列）
+  const byNet = members.slice().sort((a,b)=>b.net-a.net).slice(0, cfg.candPerSector);
+  const byChg = members.slice().sort((a,b)=>(a.pct||0)-(b.pct||0)).slice(0, Math.ceil(cfg.candPerSector/2));
+  const seen = new Set(), cands = [];
+  for (const m of byNet.concat(byChg)){ if (!seen.has(m.code)){ seen.add(m.code); cands.push(m); } }
+
+  const flows = await Promise.all(cands.map(async m=>{
+    try { const f = await fetchStockFlow(m.code); return { ...m, flow: f.length ? [f.map(x=>x[0]), f.map(x=>x[1])] : null }; }
+    catch(e){ return { ...m, flow:null }; }
+  }));
+
+  const turns = detectTurns(sectorSeries.hms, sectorSeries.vals);
+  if (!turns.length) return null;
+  const lead = scoreLeaders(bk, turns, flows);
+  const leader = { bk, name, turns, up: lead.up, down: lead.down,
+             axisLen: sectorSeries.hms.length,          // ★ 供 runLeaderAnalysis 判断"本分钟是否已算过"
+             at: new Date().toTimeString().slice(0,8), ok:true };
+  LEADER.cache[bk] = leader;
+  return leader;
+}
+
+/* ---------- 后台批量分析在榜板块 ---------- */
+async function runLeaderAnalysis(){
+  if (!LEADER_CFG.enabled || LEADER.running) return;
+  if (!ST.ready || ST.axis.length < 20) return;
+  LEADER.running = true;
+  try{
+    const rows = (typeof __lastRows !== "undefined" && __lastRows) ? __lastRows : [];
+    const boards = [];
+    const cs = rows.filter(r=>r.kind==="concept");
+    const ind = rows.filter(r=>r.kind==="industry");
+    cs.slice().sort((a,b)=>b.net-a.net).slice(0,9).forEach(r=>boards.push(r));
+    cs.slice().sort((a,b)=>a.net-b.net).slice(0,9).forEach(r=>boards.push(r));
+    ind.slice().sort((a,b)=>b.net-a.net).slice(0,5).forEach(r=>boards.push(r));
+    ind.slice().sort((a,b)=>a.net-b.net).slice(0,5).forEach(r=>boards.push(r));
+
+    const hms = ST.axis.slice();
+    const todo = [];
+    for (const b of boards.slice(0, LEADER_CFG.maxSectors)){
+      const c = LEADER.cache[b.code];
+      if (c && c.ok && c.axisLen === hms.length) continue;   // 本分钟已算过
+      const vals = ST.values[b.code];
+      if (!vals || vals.length !== hms.length) continue;
+      todo.push({ b, series:{ hms, vals: vals.slice() } });
+    }
+    LEADER.stats = { boards: boards.length, todo: todo.length, done: 0, fail: 0 };
+    for (const t of todo){
+      try { const r = await analyzeSectorLeader(t.b.code, t.b.name, t.series);
+            if (r) LEADER.stats.done++; else LEADER.stats.fail++; }
+      catch(e){ LEADER.stats.fail++; }
+    }
+    LEADER.updated = new Date().toTimeString().slice(0,8);
+    renderLeaderPanel();     // 榜单不再显示龙头列，分析结果只喂给下方「龙头领先反应」面板
+  } finally { LEADER.running = false; }
+}
+
+/* ---------- 龙头面板 ---------- */
+function renderLeaderPanel(){
+  const box = $("leaderBoardBox");
+  if (!box) return;
+  const rows = (typeof __lastRows !== "undefined" && __lastRows) ? __lastRows : [];
+  const stat = $("leaderStat");
+  const recs = [];
+  for (const r of rows){ const c = leaderOf(r.code); if (c) recs.push({ r, c }); }
+  if (stat){
+    stat.textContent = LEADER_CFG.enabled
+      ? `已分析 ${Object.keys(LEADER.cache).filter(k=>LEADER.cache[k].ok).length} 个板块`
+        + (LEADER.stats.todo !== undefined ? `（本轮排队 ${LEADER.stats.todo}，完成 ${LEADER.stats.done}）` : "")
+        + (LEADER.updated ? ` · 更新于 ${LEADER.updated}` : "")
+      : "已关闭";
+  }
+  if (!recs.length){ box.innerHTML = `<div style="color:var(--fg3);font-size:12.5px">正在分析在榜板块的成分股…（首次需要约 10 秒）</div>`; return; }
+  recs.sort((a,b)=>Math.abs(b.r.net)-Math.abs(a.r.net));
+  const detail = x => x ? x.detail.slice(0,6)
+      .map(d=>`${d.t}${d.dir==="点火"?"↑":"↓"}${d.lead>=0?"+":""}${d.lead}′`).join(" ") : "";
+  // 卡片式：每张卡内部分行排列（板块+净额 / 领涨 / 领跌 / 拐点依据），
+  // 不再用 7 列宽表格 —— 手机上那会挤成一条条竖排文字，还得左右拖。
+  let h = `<div class="cardList">`;
+  for (const {r,c} of recs){
+    const U = (c.up||[])[0], D = (c.down||[])[0];
+    h += `<div class="card">
+      <div class="row1">
+        <span class="t" title="${r.name}">${r.name}</span>
+        <span class="num ${r.net>=0?"up":"dn"}">${sgn(r.net)}</span>
+      </div>
+      <div class="pairs">
+        <span class="p"><em>领涨</em>${U ? `<b class="up">${U.name}</b>` : "—"}</span>
+        ${U ? `<span class="p"><em>领先</em>${U.avgLead.toFixed(1)}′</span>
+               <span class="p"><em>先手</em>${U.hits}/${U.n}</span>` : ""}
+      </div>
+      <div class="pairs">
+        <span class="p"><em>领跌</em>${D ? `<b class="dn">${D.name}</b>` : "—"}</span>
+        ${D ? `<span class="p"><em>领先</em>${D.avgLead.toFixed(1)}′</span>
+               <span class="p"><em>先手</em>${D.hits}/${D.n}</span>` : ""}
+      </div>
+      <div class="desc" style="margin:8px 0 0">
+        拐点 ${c.turns.length} 个 · 点 ${c.turns.filter(t=>t.dir==="点火").length}
+        / 跳 ${c.turns.filter(t=>t.dir==="跳水").length}
+        ${U ? `<br>涨：${detail(U)}` : ""}${D ? `<br>跌：${detail(D)}` : ""}
+      </div>
+    </div>`;
+  }
+  h += `</div>`;
+  h += `<div style="margin-top:10px;font-size:12px;color:var(--fg3);line-height:1.85">
+    判定标准：龙头不是"净额最大"，而是<b>在板块拐点上先动手的那只</b>。
+    领先分钟 = 板块拐点时刻 − 个股同向显著反应时刻（正数＝个股领先）。
+    评分 = 1.8×领先幅度 + 1.0×先手率 + 0.7×响应幅度 + 0.5×个股净额，点火/跳水两个方向分别排名。
+    「先手 x/y」＝ 该股在 y 个同向拐点里抢在板块前面反应了 x 次。</div>`;
+  box.innerHTML = h;
+}
+
+/* ---------------------------- 主循环 ---------------------------- */
+let timer = null;
+async function tick(){
+  clearTimeout(timer);
+  try{
+    if (!ST.ready){ await fullLoad(); render(); }
+    else {
+      const prevDate = ST.date;                  // 先记下"面板里装的是哪一天"
+      const sess = await resolveSession();
+      if (ST.mode === "history"){
+        // 历史回看：不覆盖视图、不写归档；只刷新时间表
+        renderTimetable();
+      } else {
+        // ★ 归档必须发生在"日期切换重拉"之前，
+        //   否则周一开盘时上一个交易日的数据会被覆盖掉
+        // 龙头分析：每 5 分钟在后台跑一轮（只分析在榜板块）
+        if (Date.now() - (LEADER.lastRun || 0) > 5*60*1000 && !LEADER.running){
+          LEADER.lastRun = Date.now();
+          runLeaderAnalysis();          // 不 await，避免阻塞刷新节奏
+        }
+        const arc = maybeArchive(sess, prevDate);
+        if (arc && arc.action !== "skip"){
+          ST.note = (ST.note ? ST.note + "　" : "")
+            + `已归档 ${arc.date} 收盘数据（${arc.total}/${ARCHIVE_LIMIT} 天）`
+            + (arc.evicted && arc.evicted.length ? `，淘汰最早 ${arc.evicted.join("、")}` : "");
+        }
+        if (sess.apiDate !== ST.date){
+          // 交易日切换（例如 09:30 由昨日切到今日）→ 全量重拉
+          ST.note = `交易日切换为 ${sess.apiDate}，正在重新拉取…`;
+          $("note").textContent = ST.note;
+          await fullLoad(true);
+      } else if (ST.live){
+        const snap = await fetchSnapshot();
+        applySnapshot(snap);
+        try{ await fetchQuotes(); }catch(e){}
+        // ★ 必须 await：否则本轮 render 会在"面板正被清空重建"的中间态执行，
+        //   而且 fullLoad 内部的 ST.busy 守卫会让紧接着的一轮直接空转。
+        if (Date.now() - ST.lastFull > 3*60*1000) await fullLoad(true);   // 每 3 分钟回补
+      }
+      }
+      render();
+    }
+  }catch(e){
+    $("note").textContent = "取数异常：" + e.message + "，稍后自动重试";
+  }
+  timer = setTimeout(tick, ST.live ? 5000 : 20000);
+}
+
+/* ---------------------------- 交互 ---------------------------- */
+$("btnRefresh").onclick = async ()=>{
+  const btn = $("btnRefresh");
+  btn.textContent = "刷新中…";
+  try{
+    const snap = await fetchSnapshot();
+    applySnapshot(snap);
+    render();
+    btn.textContent = "已刷新";
+  }catch(e){
+    // 不再静默吞掉：手动点了刷新却什么都没发生是明显的坏体验
+    $("note").textContent = "手动刷新失败：" + (e && e.message ? e.message : e) + "，将在下一轮自动重试";
+    btn.textContent = "刷新失败";
+  }
+  setTimeout(()=>{ btn.textContent = "立即刷新"; }, 900);
+};
+$("btnLeaderMode").onclick = ()=>{
+  LEADER_MODE = (LEADER_MODE === "grid") ? "lanes" : "grid";
+  applyLeaderCaption();
+  render();
+};
+function applyLeaderCaption(){
+  const lanes = (LEADER_MODE === "lanes");
+  $("btnLeaderMode").textContent = lanes ? "切换为逐格视图" : "切换为时长视图";
+  $("leaderSub").textContent = lanes
+    ? "格子宽度＝该题材当主角的时长（20 分钟粒度），横向位置按时间对应；三行分别是辨识度第 1/2/3 名；底色红=净流入、绿=净流出"
+    : "每 10 分钟一格（横向按时间等距排列），三行分别是该时刻辨识度第 1/2/3 名；底色红=净流入、绿=净流出";
+}
+$("btnLeaderRun").onclick = ()=>{
+  LEADER.cache = Object.create(null);
+  $("btnLeaderRun").textContent = "分析中…";
+  runLeaderAnalysis().finally(()=>{ $("btnLeaderRun").textContent = "重新分析龙头"; });
+};
+/* 「数据校验与清洗」面板已从界面移除（清洗逻辑本身仍在 washAll 里后台运行）。
+   面板 DOM 不存在时这两个绑定会变成 null.onclick 直接抛错、中断后面所有事件绑定，
+   所以统一加存在性判断。 */
+if ($("btnCleanCsv")) $("btnCleanCsv").onclick = ()=>{
+  const NL = String.fromCharCode(10), CR = String.fromCharCode(13), BOM = String.fromCharCode(65279);
+  const flat = t => String(t==null?"":t).split(NL).join(" ").split(CR).join(" ").split(",").join("；");
+  const rows = [["记录时刻","数据时刻","板块代码","板块","异常类型","跳变幅度(亿)","修正前","修正后","处理方式"]];
+  for (const r of CLEAN_LOG){
+    rows.push([ r.t||"", r.time||"", r.code||"", r.name||"", r.kind||"",
+      (typeof r.jump==="number" ? r.jump.toFixed(2) : r.jump||""),
+      (typeof r.before==="number" ? r.before.toFixed(2) : r.before||""),
+      (typeof r.after==="number" ? r.after.toFixed(2) : r.after||""),
+      flat(r.action) ]);
+  }
+  const quote = x => '"' + String(x).split('"').join('""') + '"';
+  const csv = BOM + rows.map(r=>r.map(quote).join(",")).join(CR + NL);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv"}));
+  const stamp = new Date().toTimeString().slice(0,8).split(":").join("");
+  a.download = "资金流异常点清单_" + (ST.date || "") + "_" + stamp + ".csv";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+};
+if ($("btnCleanClear")) $("btnCleanClear").onclick = ()=>{
+  CLEAN_LOG.length = 0;
+  CLEAN_STATS.anomalies = 0; CLEAN_STATS.rejectedSnapshots = 0;
+  renderCleanPanel();
+  renderLeaderPanel();
+};
+$("btnLive").onclick = ()=>{ exitHistory(); };
+$("btnSelftest").onclick = ()=>{
+  const p = $("selftestPanel");
+  p.style.display = "block";
+  renderSelftest();
+  p.scrollIntoView({behavior:"smooth", block:"start"});
+};
+$("btnTheme").onclick = ()=>{
+  document.body.classList.toggle("light");
+  const light = document.body.classList.contains("light");
+  $("btnTheme").textContent = light ? "暗色" : "亮色";
+  try{ localStorage.setItem("flowlive_theme", light?"light":"dark"); }catch(e){}
+  setTimeout(render, 30);
+};
+try{ if (localStorage.getItem("flowlive_theme")==="light"){ document.body.classList.add("light"); $("btnTheme").textContent="暗色"; } }catch(e){}
+let rz; window.addEventListener("resize", ()=>{ clearTimeout(rz); rz=setTimeout(render,180); });
+
+/* 读取用户保存的清洗参数 */
+(function(){
+  try{
+    const raw = localStorage.getItem("flowlive_clean_cfg");
+    if (raw) Object.assign(CLEAN_CFG, JSON.parse(raw));
+  }catch(e){}
+})();
+
+/* 修复前后对比 */
+function renderCleanCompare(){
+  const el = $("cleanCompare");
+  if (!el) return;
+  const c = cleanCompare();
+  const ok = c.after <= Math.max(c.before, CLEAN_CFG.minJumpYi);
+  el.innerHTML = `<div style="display:flex;gap:26px;flex-wrap:wrap;font-size:12.5px;color:var(--fg2)">
+      <span>修复前最大跳变：<b class="dn" style="font-size:15px">${fmt(c.before,2)}</b> 亿
+        <span style="color:var(--fg3)">${c.beforeAt||"—"} ${c.beforeName||""}</span></span>
+      <span>修复后最大跳变：<b class="up" style="font-size:15px">${fmt(c.after,2)}</b> 亿
+        <span style="color:var(--fg3)">${c.afterAt||"—"} ${c.afterName||""}</span></span>
+      <span>修正处数：<b>${CLEAN_STATS.anomalies}</b></span>
+      <span>丢弃滞后快照：<b>${CLEAN_STATS.rejectedSnapshots}</b> 轮</span>
+    </div>`;
+}
+
+/* ---------------------------- 启动 ---------------------------- */
+/* 启动后立刻尝试归档一次 —— 否则非实时下要等首轮 tick（20 秒）才写档 */
+async function initialArchive(){
+  try{
+    const d = ST.date;                       // 面板里装载的那一天
+    const sess = await resolveSession();
+    const a = maybeArchive(sess, d);
+    if (a && a.action !== "skip"){
+      ST.note = (ST.note ? ST.note + "　" : "")
+        + `已归档 ${a.date} 收盘数据（${a.total}/${ARCHIVE_LIMIT} 天）`
+        + (a.evicted && a.evicted.length ? `，淘汰最早 ${a.evicted.join("、")}` : "");
+      render();
+    } else {
+      renderTimetable();
+    }
+  }catch(e){}
+}
+
+(async function boot(){
+  progress(0.01, "初始化…");
+  try{
+    const sess = await resolveSession();
+    if (loadCache(sess.apiDate)){
+      ST.note = (ST.note||"") + "（已从本地缓存秒开，正在后台校验最新数据）";
+      progress(null);
+      ST.ready = true;
+      render();
+      initialArchive();
+      setTimeout(()=>fullLoad(true), 800);     // 后台静默校验
+      timer = setTimeout(tick, ST.live ? 5000 : 20000);
+      return;
+    }
+  }catch(e){}
+  await fullLoad();
+  render();
+  initialArchive();
+  timer = setTimeout(tick, ST.live ? 5000 : 20000);
+})();
+</script>
+</body>
+</html>
