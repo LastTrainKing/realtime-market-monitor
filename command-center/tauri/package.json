@@ -1,0 +1,14 @@
+{
+  "name": "capital-flow-center-shell",
+  "private": true,
+  "version": "1.1.0",
+  "description": "资金流向指挥中心 AI Edition 桌面外壳",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  }
+}

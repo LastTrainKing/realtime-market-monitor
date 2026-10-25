@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="color-scheme" content="dark" />
+    <title>资金流向指挥中心</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #05070f;
+        color: #eaf1ff;
+        font-family: 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+        overflow: hidden;
+      }
+      /* 启动占位：React 挂载前也能看到品牌界面，绝不出现黑屏 */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background:
+          radial-gradient(1000px 700px at 50% 38%, rgba(40, 80, 180, 0.3), transparent 62%),
+          linear-gradient(160deg, #04060d 0%, #070c18 50%, #04060d 100%);
+        z-index: 9999;
+      }
+      #boot .mark {
+        width: 92px;
+        height: 92px;
+        border-radius: 24px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(145deg, rgba(79, 163, 255, 0.24), rgba(124, 92, 255, 0.22));
+        border: 1px solid rgba(140, 190, 255, 0.34);
+        box-shadow: 0 0 42px rgba(79, 163, 255, 0.34);
+      }
+      #boot h1 {
+        font-size: 30px;
+        letter-spacing: 0.16em;
+        margin: 0;
+        background: linear-gradient(100deg, #ffffff 10%, #9cc8ff 46%, #b9a2ff 88%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      #boot p {
+        margin: 0;
+        font-size: 13px;
+        letter-spacing: 0.3em;
+        color: rgba(150, 175, 215, 0.75);
+      }
+      #boot .tip {
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        color: rgba(170, 195, 230, 0.85);
+      }
+      #boot .err {
+        max-width: 720px;
+        padding: 16px 22px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 77, 94, 0.5);
+        background: rgba(60, 12, 20, 0.6);
+        color: #ffc4ca;
+        font-size: 13px;
+        line-height: 1.8;
+        white-space: pre-wrap;
+        word-break: break-all;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="boot">
+      <div class="mark">
+        <svg viewBox="0 0 64 64" width="52" height="52" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="bootGrad" x1="0" y1="0" x2="64" y2="64">
+              <stop offset="0%" stop-color="#7fd0ff" />
+              <stop offset="55%" stop-color="#4fa3ff" />
+              <stop offset="100%" stop-color="#a98bff" />
+            </linearGradient>
+          </defs>
+          <path d="M8 42 L20 30 L30 38 L44 18 L56 26" stroke="url(#bootGrad)" stroke-width="4"
+            stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M8 50 L20 44 L30 49 L44 34 L56 40" stroke="url(#bootGrad)" stroke-width="3"
+            stroke-linecap="round" stroke-linejoin="round" opacity="0.5" />
+          <circle cx="44" cy="18" r="4.5" fill="#7fd0ff" />
+        </svg>
+      </div>
+      <h1>资金流向指挥中心</h1>
+      <p>CAPITAL FLOW COMMAND CENTER</p>
+      <div class="tip" id="bootTip">正在启动指挥中心…</div>
+      <div class="err" id="bootErr"></div>
+    </div>
+
+    <script>
+      // 任何脚本错误都必须让用户看到原因，而不是黑屏
+      (function () {
+        var err = document.getElementById('bootErr')
+        var tip = document.getElementById('bootTip')
+        function show(msg) {
+          if (!err) return
+          err.style.display = 'block'
+          err.textContent = String(msg)
+          if (tip) tip.textContent = '启动遇到问题，请截图反馈给技术支持'
+        }
+        window.addEventListener('error', function (e) {
+          show((e.message || 'Unknown error') + '\n' + (e.filename || '') + ':' + (e.lineno || ''))
+        })
+        window.addEventListener('unhandledrejection', function (e) {
+          show('Promise rejection: ' + (e.reason && e.reason.message ? e.reason.message : e.reason))
+        })
+      })()
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

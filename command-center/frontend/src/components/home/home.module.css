@@ -1,0 +1,467 @@
+/* 首页四个核心模块的样式。
+   全部使用全局主题变量，跟随深色主题。 */
+
+/* ---------------- 数据口径条 ---------------- */
+
+.provenance {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: linear-gradient(150deg, rgba(26, 36, 60, 0.78), rgba(14, 20, 36, 0.68));
+  flex-shrink: 0;
+}
+
+.provItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 18px;
+  border-right: 1px solid rgba(120, 160, 230, 0.12);
+}
+
+.provItem:first-child {
+  padding-left: 0;
+}
+
+.provItem:last-child {
+  border-right: none;
+}
+
+.provLabel {
+  font-size: 11px;
+  color: var(--text-mute);
+  letter-spacing: 0.1em;
+}
+
+.provValue {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.provValue.dim {
+  font-weight: 500;
+  color: var(--text-dim);
+  font-size: 13.5px;
+}
+
+/* ---------------- 口径提示 / 告警 ---------------- */
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.notice.info {
+  border: 1px solid rgba(120, 160, 230, 0.22);
+  background: rgba(79, 163, 255, 0.07);
+  color: var(--text-dim);
+}
+
+.notice.warn {
+  border: 1px solid rgba(255, 176, 32, 0.3);
+  background: rgba(255, 176, 32, 0.08);
+  color: #f0d19a;
+}
+
+.notice .mark {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------------- 四模块栅格 ---------------- */
+
+.modGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.62fr) minmax(0, 1fr);
+  grid-auto-rows: minmax(300px, 1fr);
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1500px) {
+  .modGrid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(320px, auto);
+  }
+}
+
+/* 模块内通用容器：上方指标条 + 下方图表撑满 */
+.modWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 模块内的图表容器 */
+.chartBox {
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+}
+
+/* ---------------- 指数分时头部指标 ---------------- */
+
+.headStats {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.headStat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.headStatLabel {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  letter-spacing: 0.06em;
+}
+
+.headStatValue {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+/* ---------------- 时点数据面板 ---------------- */
+
+.tlWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.tlHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(140, 190, 255, 0.26);
+  background: linear-gradient(180deg, rgba(79, 163, 255, 0.16), rgba(79, 163, 255, 0.04));
+  flex-shrink: 0;
+}
+
+.tlMinute {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #dbe9ff;
+}
+
+.tlDate {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+
+/* 时点下拉选择器 */
+.picker {
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(140, 190, 255, 0.3);
+  background: rgba(8, 12, 24, 0.9);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  outline: none;
+  cursor: pointer;
+  max-width: 132px;
+}
+
+.picker:focus {
+  border-color: var(--border-hi);
+  box-shadow: 0 0 0 3px rgba(79, 163, 255, 0.14);
+}
+
+.tlGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tlCell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.032);
+}
+
+.tlCell.wide {
+  grid-column: span 2;
+}
+
+.tlCellLabel {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  letter-spacing: 0.07em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tlCellValue {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.15;
+  word-break: break-all;
+}
+
+.tlCellSub {
+  font-size: 11px;
+  color: var(--text-mute);
+  font-family: var(--mono);
+}
+
+.tlNote {
+  margin-top: auto;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-mute);
+  padding-top: 4px;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed rgba(120, 160, 230, 0.24);
+  color: var(--text-mute);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+}
+
+/* ---------------- 板块流入流出对比 ---------------- */
+
+.secWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.secCols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 板块模块顶部的"来源 + 覆盖数"元信息条 */
+.secMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 1100px) {
+  .secCols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.secCol {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.022);
+  overflow: hidden;
+}
+
+.secHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.secHead.in {
+  color: #ff8f9b;
+  background: linear-gradient(180deg, rgba(255, 77, 94, 0.14), transparent);
+}
+
+.secHead.out {
+  color: #5fd9ab;
+  background: linear-gradient(180deg, rgba(35, 201, 139, 0.13), transparent);
+}
+
+.secBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.secRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(120, 160, 230, 0.07);
+}
+
+.secRow:last-child {
+  border-bottom: none;
+}
+
+.secName {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.secRank {
+  flex-shrink: 0;
+  width: 18px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-mute);
+  text-align: right;
+}
+
+.secLabel {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.secKind {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: var(--text-mute);
+  border: 1px solid rgba(120, 160, 230, 0.2);
+}
+
+.secRight {
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--mono);
+}
+
+.secValue {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.secPct {
+  font-size: 11px;
+}
+
+/* ---------------- 历史库状态 ---------------- */
+
+.histBar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 11px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.025);
+  flex-shrink: 0;
+}
+
+.histItem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.histKey {
+  color: var(--text-mute);
+  letter-spacing: 0.06em;
+  font-size: 11.5px;
+}
+
+.histVal {
+  font-family: var(--mono);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.histSpacer {
+  flex: 1;
+}
+
+.capList {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.capChip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.capChip.ok {
+  border-color: rgba(35, 201, 139, 0.4);
+  background: rgba(35, 201, 139, 0.1);
+  color: #6fe0b4;
+}
+
+.capChip.no {
+  border-color: rgba(255, 176, 32, 0.34);
+  background: rgba(255, 176, 32, 0.08);
+  color: #f0c078;
+}

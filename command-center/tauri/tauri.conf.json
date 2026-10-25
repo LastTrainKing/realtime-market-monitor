@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "资金流向指挥中心",
+  "version": "1.1.0",
+  "identifier": "com.capitalflow.commandcenter",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:5183",
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
+    "beforeBuildCommand": "npm --prefix ../frontend run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "资金流向指挥中心",
+        "width": 1920,
+        "height": 1080,
+        "minWidth": 1280,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": true,
+        "decorations": false,
+        "transparent": false,
+        "center": true,
+        "focus": true,
+        "visible": true,
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "theme": "Dark",
+        "backgroundColor": "#05070F"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": false
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Capital Flow Command Center",
+    "copyright": "Copyright © 2026",
+    "category": "Finance",
+    "shortDescription": "A 股盘中资金流向实时指挥中心",
+    "longDescription": "资金流向指挥中心 AI Edition —— 面向 A 股交易研究的 Windows 桌面实时盯盘终端，提供板块/个股资金流、早盘节点检测、个股异动、九榜统计与历史复盘。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../backend/target/release/capital_backend.exe": "backend/capital_backend.exe"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {}
+}

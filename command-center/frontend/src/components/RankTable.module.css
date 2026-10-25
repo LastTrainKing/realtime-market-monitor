@@ -1,0 +1,92 @@
+.wrap {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-mute);
+  letter-spacing: 0.02em;
+}
+
+.name {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  background: rgba(124, 92, 255, 0.18);
+  color: #cbb8ff;
+  border: 1px solid rgba(124, 92, 255, 0.3);
+  vertical-align: middle;
+}
+
+.delta {
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.deltaUp {
+  color: var(--up);
+}
+.deltaDown {
+  color: var(--down);
+}
+
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  background: rgba(79, 163, 255, 0.16);
+  color: #bfe0ff;
+  border: 1px solid rgba(79, 163, 255, 0.3);
+}
+
+.count.hot {
+  background: rgba(255, 77, 94, 0.2);
+  color: #ffd0d6;
+  border-color: rgba(255, 77, 94, 0.42);
+}
+
+.barCell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  justify-content: flex-end;
+}
+
+.barMini {
+  width: 58px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.barMini > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
