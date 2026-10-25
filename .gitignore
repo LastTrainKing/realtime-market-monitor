@@ -1,0 +1,69 @@
+# ---- 运行时产物（不要提交）----
+data/
+logs/
+shots/
+*.log
+app.lock
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ---- 构建产物 ----
+build/dist_*/
+build/build_v*/
+_internal/
+dist/
+*.exe
+*.msi
+*.dll
+*.pyd
+*.spec.bak
+
+# ---- 虚拟环境 ----
+.venv/
+venv/
+native_env/
+env/
+node_modules/
+backend/target/
+tauri/target/
+target/
+
+# ---- 数据与缓存 ----
+*.parquet
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+cache/
+*.npy
+*.npz
+
+# ---- 凭据与本地配置（★ 绝不提交）----
+.env
+.env.*
+!.env.example
+config.local.json
+secrets.json
+*.pem
+*.key
+*.p12
+*.pfx
+token
+tokens.json
+cookies.txt
+credentials*
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 归档过程中的中间文件 ----
+_manifest*.csv
+_skipped.txt
+_raw_inventory.json
