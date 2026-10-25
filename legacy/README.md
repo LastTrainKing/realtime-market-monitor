@@ -1,19 +1,48 @@
 # 历史源码快照
 
-本目录保存原生桌面版的**历史源码**。这些文件**不是从 Git 历史还原的**，
-而是从开发机/U 盘上实际存在的文件里取出的 —— 每一个都标注了原始路径与
-其 `VERSION` 常量，未做任何修改。
+本目录保存原生桌面版的**历史源码**与**旧形态文档**。
+这些文件**不是从 Git 历史还原的**，而是从开发机/U 盘上实际存在的文件里取出的 ——
+每一个都标注了原始路径与其 `VERSION` 常量，未做任何修改。
 
 ## 内容
 
-| 目录 | 文件 | `VERSION` 常量 | 文件时间 | 原始路径 |
+| 目录 | 文件 | `VERSION` | 文件时间 | 原始路径 |
 |---|---|---|---|---|
 | `v1.2.5/` | `_native_app_ref.py` | `1.2.5` | 2026-09-21 08:21 | `…\flowlive_v201\_native_app_ref.py` |
 | `v2.0.1_to_v2.0.2_transition/` | `native_app.py` | `2.0.2` | 2026-09-21 13:05 | `…\flowlive_v201\build\native_app.py` |
 | `v2.0.2/` | `app_main_v202.py` | `2.0.2` | 2026-09-22 00:54 | `…\flowlive_v201\build\app_main_v202.py` |
 | `v2.0.2b/` | `app_main_v202b.py` | `2.0.2` | 2026-09-22 01:17 | `…\flowlive_v201\build\app_main_v202b.py` |
 | `v2.0.2_core_reference/` | `_ref_core_*.py`（9 个） | — | 2026-09-21 08:23 | `…\flowlive_v201\_ref_core_*.py` |
-| `snapshots/` | `native_app.py.bak_v203`、`native_app_patched.py` | `2.0.2` | 2026-09-21 13:05 / 2026-09-22 00:52 | `…\flowlive_v201\tmp\` |
+| `snapshots/` | `native_app.py.bak_v203`、`native_app_patched.py` | `2.0.2` | 09-21 13:05 / 09-22 00:52 | `…\flowlive_v201\tmp\` |
+| `html-dashboard-shell/` | 4 份文档 | — | 2026-09-18~19 | `…\03_桌面版_exe\资金流向实时看板_旧原生版v1.2.5\` |
+
+## `v1.2.5/` 是**纯 PySide6 原生版**
+
+文件头写得很清楚：
+
+> ★ 本程序不含任何浏览器内核 / WebView / HTML / CSS / JS。
+> 窗口、菜单、工具栏、表格全部是 Qt 原生控件；
+> 图表是 matplotlib 在 Qt 画布上原生绘制（AGG 光栅化），不是网页 canvas。
+
+`VERSION = "1.2.5"`。**该版本只有源码，没有 EXE** —— PySide6 onedir 产物（约 145 MB）
+没有留存。
+
+## `html-dashboard-shell/` 是另一种东西
+
+这 4 份文档来自 `历史版本\资金流向实时看板_旧原生版v1.2.5\`。
+**该目录名有误导性**：里面的 `资金流向.exe`（8.2 MB、无 `_internal/`）是
+加载单文件 HTML 的桌面壳，不是 PySide6 原生版。
+
+| 文件 | 内容 |
+|---|---|
+| `使用说明.txt` | HTML 看板的使用说明（「数据全部在你本机浏览器里处理」） |
+| `资金流向_安装说明.txt` | 安装说明 |
+| `HTML改纯原生桌面应用_方案.md` | 「真原生，不要套壳」的可行性方案 |
+| `HTML改造exe_研究报告.md` | HTML → exe 的改造研究报告 |
+
+判定依据与完整证据见
+[../docs/version-history.md §2.3](../docs/version-history.md#23-命名与内容不一致资金流向实时看板_旧原生版v125)。
+HTML 文件本体在 [`../web-dashboard/`](../web-dashboard/)。
 
 ## 关于 `v2.0.1_to_v2.0.2_transition/`（**归属待核实**）
 
@@ -39,7 +68,7 @@
 
 > 与 `flowlive-native/build/core/` 的区别：后者是 **v3.0.6** 的内核，
 > 多出了 `source.py`、`tradingtime.py`，且 `flowdata.py` / `salience.py` /
-> `openspace.py` 都有大幅演进。**不要混用。**
+> `opensnap.py` 都有大幅演进。**不要混用。**
 
 ## 关于 `snapshots/`
 
