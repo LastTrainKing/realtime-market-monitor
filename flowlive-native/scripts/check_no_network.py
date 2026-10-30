@@ -34,8 +34,19 @@ SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules", "dist", "build_v3",
 
 
 def _base(root):
-    """运行时代码的根目录：优先 build/（本仓库结构），否则用传入的根。"""
-    for cand in (os.path.join(root, "build"), root):
+    """运行时代码的根目录。
+
+    支持三种入口：
+      · 仓库根（含 flowlive-native/build/core）
+      · flowlive-native 目录（含 build/core）
+      · build 目录本身（含 core）
+    """
+    cands = [
+        os.path.join(root, "flowlive-native", "build"),
+        os.path.join(root, "build"),
+        root,
+    ]
+    for cand in cands:
         if os.path.isdir(os.path.join(cand, "core")):
             return cand
     return root
