@@ -9,6 +9,31 @@
 
 ---
 
+## 〇、Shell 版（无数据读取能力）— 2026-10-30
+
+> 本次变更**不属于原作者的开发记录**，是归档后的新增发布形态。
+> 原版本记录保持原样，未作任何修改。
+
+**动机**：上游行情接口已对爬虫来源做风控标记，联网取数会导致运行机器 IP 被封禁。
+
+**做法**：换实现，不砍层。两版的数据访问都收敛在单一抽象层后，
+替换那一个实现即可让上层走既有降级路径。
+
+| 版本 | 改动 |
+|---|---|
+| FlowLiveNative | `flowdata.py` 2531 → 1101 行（删 26 个网络函数）；`source.py` 663 → 155 行（三源合一为 `local`）；新增 `localio.py`；删除 `server.py` |
+| CommandCenter | `net/client.rs` 重写（移除 `reqwest`，所有请求立即返回 `NetError::Disabled`）；`Cargo.toml` 移除 `reqwest` |
+
+**两种形态**：`FLOWLIVE_SHELL_MODE=replay`（离线复盘终端，默认）/ `=pure`（纯空壳）。
+
+**新增**：`scripts/check_no_network.py`（静态守卫）、`.github/workflows/shell-verify.yml`（CI）。
+
+**验收**：静态守卫 15 文件 0 违规；core 12 模块导入正常；CSV 导入→面板→导出全链路通过。
+
+**未完成**：Rust 编译由 CI 验证；`collector/*` 需先抽 `Snapshot` DTO 才能移除；打包需在目标机器执行。
+
+---
+
 ## 一、FlowLiveNative（原生版）
 
 ### v3.0.6 — 2026-09-23（最终版）
