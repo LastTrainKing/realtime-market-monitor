@@ -76,7 +76,32 @@ python flowlive-native/scripts/check_no_network.py .
 | URL 字面量 | 运行时代码零 `http(s)://` |
 | Cargo 依赖 | `Cargo.toml` 无 `reqwest` / `hyper` / `ureq` / `isahc` / `surf` |
 
-当前：**15 个文件，0 违规**。
+**实测（2026-10-30 重跑）**：
+
+```
+检查文件数: 15
+✓ 通过：运行时代码无网络库导入、无 URL 字面量、无 HTTP 依赖
+```
+
+退出码 0。**状态：已验证。**
+
+#### 覆盖范围（重要）
+
+这个脚本**不是全仓扫描**。它的覆盖边界是：
+
+| 扫描 | 不扫描 |
+|---|---|
+| `flowlive-native/build/core/**/*.py` | `command-center/backend/src/**/*.rs` 的正文 |
+| `flowlive-native/build/core2/**/*.py` | `flowlive-native/build/` 下的诊断脚本（`_diag*` / `bench_*` / `probe_*`） |
+| `flowlive-native/build/app_main_v203.py` | `android/`、`web-dashboard/`、`legacy/` |
+| 任意位置的 `Cargo.toml`（只查依赖声明） | 前端 `frontend/src/**` |
+
+**Rust 源码正文不在扫描范围内**——因此 `source/*.rs` 里仍然保留着 `https://push2.eastmoney.com`
+这类 URL 字符串。这不构成能力：没有 HTTP 客户端 crate，字符串只是死数据。
+Rust 侧的能力保证靠**依赖树**（4.2）而不是字符串扫描。
+
+若要把 Rust 正文也纳入扫描，需要先在 `source/*.rs` 里清掉 URL 常量——
+那会牵动 `collector/*` 的调用点，属下一阶段工作，本轮不做。
 
 ### 4.2 依赖树（Rust）
 
@@ -89,16 +114,22 @@ cargo tree | grep -E '(reqwest|ureq|isahc|surf) v'
 
 ### 4.3 运行期（需目标机器）
 
-| 方法 | 通过标准 |
-|---|---|
-| 断网启动 | 全功能可用，界面不报错 |
-| 联网启动 + 抓包 | 进程生命周期内 **0 个出站请求** |
-| 防火墙全阻断该进程 | 与联网时行为一致 |
+| 方法 | 通过标准 | 状态 |
+|---|---|---|
+| 断网启动 | 全功能可用，界面不报错 | **未验证** |
+| 联网启动 + 抓包 | 进程生命周期内 **0 个出站请求** | **未验证** |
+| 防火墙全阻断该进程 | 与联网时行为一致 | **未验证** |
+
+> 这三项都需要在装有 PySide6 / WebView2 的目标机器上执行，
+> 仓库与 CI 环境都做不到，因此一律标未验证，不写"应该没问题"。
 
 ### 4.4 单元测试（Rust）
 
 `net::client::tests::every_request_is_refused` 断言四个请求方法全部返回 `Err`，
 且拦截计数为 4。
+
+**状态：未验证**。CI 的该步骤在查询时仍为 `in_progress`（编译测试二进制耗时较长），
+未看到最终 conclusion，不写"通过"。
 
 ---
 

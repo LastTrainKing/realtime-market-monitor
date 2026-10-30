@@ -28,9 +28,37 @@
 
 **新增**：`scripts/check_no_network.py`（静态守卫）、`.github/workflows/shell-verify.yml`（CI）。
 
-**验收**：静态守卫 15 文件 0 违规；core 12 模块导入正常；CSV 导入→面板→导出全链路通过。
+**文档**（2026-10-30 校准）：
 
-**未完成**：Rust 编译由 CI 验证；`collector/*` 需先抽 `Snapshot` DTO 才能移除；打包需在目标机器执行。
+| 文档 | 内容 |
+|---|---|
+| `docs/SHELL.md` | 总入口：需求映射、两种形态、切断点、5 分钟验收、CI 结论、已知限制 |
+| `docs/README.md` | docs 索引、术语表、状态标签定义 |
+| `docs/DATA-BOUNDARY.md` | 边界定义、代码落点、三层验证、**扫描覆盖范围**、改动守则 |
+| `flowlive-native/SHELL.md` | Python 版：改了什么、数据从哪来、**生效范围限定**、验证记录 |
+| `command-center/SHELL.md` | Rust 版：单点切断、**两种形态不存在于本版**、回放未验证 |
+| `README.md` | Shell 章节：两形态生效范围 + 指向 `docs/SHELL.md` |
+| `market-agent/README.md` | Agent 工作台说明（独立仓库） |
+
+**验收（2026-10-30 重跑）**：
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 静态守卫 | `python flowlive-native/scripts/check_no_network.py .` | 15 文件 0 违规，退出码 0 |
+| 模块导入 | 见 `docs/SHELL.md §5.2` | 12 个模块导入正常，`source.active() == "local"` |
+| 离线回放链路 | 见 `docs/SHELL.md §5.3` | CSV 导入 → 面板 → 列表，形状 (2, 1) |
+| Rust 编译 | CI `cargo check` | success（[run 41040147833](https://github.com/LastTrainKing/realtime-market-monitor/actions/runs/41040147833)） |
+| Rust 依赖树 | CI 检查 | success（无 HTTP 客户端） |
+| Rust 单元测试 | CI | **未取到结论**（查询时 in_progress） |
+| 断网启动 / 抓包 | — | **未验证**（需目标机器） |
+
+**未完成**：
+
+1. 界面未接导入入口（`app_main_v203.py` 未 import `localio`），两种形态仅存在于 Python API 层；
+2. Rust 版无 `FLOWLIVE_SHELL_MODE` 开关；
+3. Rust 离线回放未验证（`history/fetcher.rs`、`preload.rs` 会抓数，现返回 `Err(Disabled)`）；
+4. `collector/*` 需先抽 `Snapshot` DTO 才能移除；
+5. 打包（PyInstaller / Tauri）需在目标机器执行。
 
 ---
 

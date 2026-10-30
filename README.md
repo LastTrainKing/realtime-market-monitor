@@ -8,7 +8,7 @@
 > **★ 只想拿来用：优先 `v2.0.4` 或 `v2.0.1`** —— 理由与代价见
 > [§4.4 版本选用建议](#44-版本选用建议仓库所有者标注)。
 >
-> ⚠️ **使用前必读**：[接口使用风险](#九-接口使用风险必读) ·
+> ⚠️ **使用前必读**：[接口使用风险](#九接口使用风险必读) ·
 > [免责声明](DISCLAIMER.md) · [许可状态](LICENSE.md)
 
 ---
@@ -16,7 +16,8 @@
 ## 🛡️ Shell 版：不含数据读取能力的发布形态
 
 > 分支 [`shell/no-data-read`](https://github.com/LastTrainKing/realtime-market-monitor/tree/shell/no-data-read)
-> · 说明文档：[flowlive-native/SHELL.md](flowlive-native/SHELL.md) · [command-center/SHELL.md](command-center/SHELL.md)
+> · **总入口：[docs/SHELL.md](docs/SHELL.md)**
+> · 细节：[flowlive-native/SHELL.md](flowlive-native/SHELL.md) · [command-center/SHELL.md](command-center/SHELL.md)
 
 **为什么有这个东西**：上游行情接口已对爬虫来源做风控标记。
 任何联网取数行为都会导致**运行机器的 IP 被封禁**——这不是"能不能用"的问题，
@@ -27,10 +28,14 @@
 
 ### 两种形态（同一套代码，环境变量切换）
 
-| 形态 | 开关 | 能力 |
-|---|---|---|
-| **离线复盘终端**（默认） | `FLOWLIVE_SHELL_MODE=replay` | 导入本地 CSV/JSON、回放历史、跑全部算法、导出报告 |
-| **纯空壳** | `FLOWLIVE_SHELL_MODE=pure` | 界面可启动，**无导入入口**，无任何数据 |
+| 形态 | 开关 | 能力 | 生效范围 |
+|---|---|---|---|
+| **离线复盘终端**（默认） | `FLOWLIVE_SHELL_MODE=replay` | 导入本地 CSV/JSON、回放历史、跑全部算法、导出报告 | **仅 Python API 层** |
+| **纯空壳** | `FLOWLIVE_SHELL_MODE=pure` | 拒绝导入，无任何数据入口 | **仅 Python API 层** |
+
+> **界面没有接导入入口。** `app_main_v203.py` 未 import `localio`，全仓零 UI 调用点；
+> Rust 版连这个环境变量都没有。当前只能在 Python 里调 API，不能在界面里点按钮。
+> 详见 [docs/SHELL.md §三](docs/SHELL.md#三两种形态当前生效范围)。
 
 ### 做法：换实现，不砍层
 

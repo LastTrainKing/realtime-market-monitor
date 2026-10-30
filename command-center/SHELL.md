@@ -76,31 +76,65 @@ URL 字符串仍存在于 `source/*.rs`，但没有客户端去使用它们，�
 单元测试 `net::client::tests::every_request_is_refused` 断言：
 四个请求方法全部返回 `Err`，且拦截计数为 4。
 
+**状态：未验证。** 该测试已写进 CI，但查询时该步骤仍为 `in_progress`
+（编译测试二进制耗时较长），未看到最终 conclusion。
+
 ---
 
-## 四、两种形态
+## 四、两种形态：Rust 版没有这个开关
 
-与 Python 版对齐：
+Python 版有 `FLOWLIVE_SHELL_MODE=pure|replay`。**Rust 版没有。**
 
-| 形态 | 行为 |
+`grep -rn "SHELL_MODE\|shell_mode" command-center/backend/src/` 无结果——
+这一版的行为是固定的：所有取数请求被拒，本地读取路径可用。
+不存在"纯空壳 / 离线复盘终端"的切换，也没有对应的环境变量或配置项。
+
+### 4.1 本地读取路径确实存在
+
+| 文件 | 提供的接口 | 是否经过 `HttpClient` |
+|---|---|---|
+| `history/parquet_store.rs` | `query_stock` / `query_market_at` / `query_market_range` / `query_codes` / `read_series` / `series_dates` / `available_dates` | **否** |
+| `history/duck.rs` | `stock_minute` / `market_at` / `market_range` / `series` / `trading_dates` / `stock_row_count` | **否** |
+| `history/manifest.rs` | 清单解析（纯结构体） | **否** |
+
+这些接口直接读本地 Parquet / DuckDB，不碰网络层。
+
+### 4.2 但 `history/` 也有会抓数的一半
+
+| 文件 | 行为 |
 |---|---|
-| **纯空壳** | 界面可启动，全部面板为空，无导入入口 |
-| **离线复盘终端** | 读本地 Parquet 历史库回放（`history/` 模块本就只读本地） |
+| `history/fetcher.rs` | `fetch_date()` 内部调 `sina.minute_kline()` |
+| `history/preload.rs` | `fetch_index_series_multi_day()` 调 `em.index_minute_kline()`；`fetch_date_minutes()` 调 `sina.minute_kline()` |
 
-Rust 版的 `history/` 从 Parquet 读数据，不经过 `HttpClient`，
-因此**离线回放天然可用**，不需要额外改造。
+这些调用现在全部拿到 `Err(NetError::Disabled)`，会走既有错误路径。
+
+### 4.3 因此：回放是否可用，未验证
+
+**不能写"离线回放天然可用"。** 准确的说法是：
+
+- 纯本地读接口存在且不经过网络层（**代码事实**）；
+- 抓数接口会失败（**代码事实**）；
+- **"用已有 Parquet 在界面上回放"这个端到端流程，没有运行证据**（**未验证**）。
+
+要验证它，需要在装有 Rust + WebView2 的机器上构建并实际打开界面看历史页签。
+CI 只做 `cargo check` 与单测，不证明这件事。
 
 ---
 
 ## 五、尚未完成（如实标注）
 
-1. **未在本地编译验证**：本机无 Rust 工具链。改动的编译正确性由 CI 的
-   `cargo check` 保证——推上去后请看 Actions 结果。
-2. **未做前端改动**：前端不直接访问网络（设计如此），故无需改动。
-3. **未做 Tauri 打包**：需要 Windows + WebView2 环境，在目标机器上执行。
-4. **`collector/*` 仍在**：它们现在每次调用都拿到 `Err(Disabled)`，
-   会走降级路径。彻底删除它们需要先抽出 `Snapshot` DTO，
-   属下一阶段工作（见重构方案）。
+1. **本机未编译**：本机无 Rust 工具链。编译正确性由 CI 保证——
+   `cargo check` 与「依赖树无 HTTP 客户端」两步**均已 success**，
+   见 [run 41040147833](https://github.com/LastTrainKing/realtime-market-monitor/actions/runs/41040147833)。
+2. **单元测试结论未取到**：同上，该步骤查询时仍在跑。
+3. **未做前端改动**：前端不直接访问网络（设计如此），故无需改动。
+4. **未做 Tauri 打包**：需要 Windows + WebView2 环境，在目标机器上执行。
+5. **`collector/*` 仍在**：它们现在每次调用都拿到 `Err(Disabled)`，
+   会走降级路径。彻底删除它们需要先抽出 `Snapshot` DTO，属下一阶段工作。
+6. **`source/*.rs` 里的 URL 常量未删**：没有 HTTP 客户端，这些字符串是死数据。
+   清掉它们会牵动 `collector/*` 的调用点，属下一阶段工作。
+7. **离线回放未验证**：见 [§四](#四两种形态rust-版没有这个开关)。
+8. **无 `FLOWLIVE_SHELL_MODE` 开关**：两种形态只存在于 Python 版。
 
 ---
 

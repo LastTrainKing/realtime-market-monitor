@@ -34,6 +34,19 @@ set FLOWLIVE_SHELL_MODE=pure
 
 默认是 `replay`。理由：一个什么都干不了的壳没有使用价值，也无法验证算法层是否还活着。
 
+> ### ⚠ 生效范围（必读）
+>
+> **这个开关目前只在 Python API 层生效，界面没有接。**
+>
+> - `core/localio.py` 是唯一读取 `FLOWLIVE_SHELL_MODE` 的地方；
+> - `app_main_v203.py` **没有 import `localio`**，全仓零 UI 调用点；
+> - 因此界面上**看不到导入按钮，也无法在界面里切换形态**。
+>
+> 当前能做的：在 Python 里 `import localio` 调 API。
+> 当前不能做的：打开程序点按钮导入数据。
+>
+> 这一条不是"没写完"，是本轮的明确范围：**只做文档，不改 UI**。
+
 ---
 
 ## 三、改了什么
@@ -95,7 +108,16 @@ python scripts/check_no_network.py .
 2. 运行时代码不得出现 `http(s)://` 字面量
 3. 若有 `Cargo.toml`，不得依赖 reqwest / hyper / ureq 等 HTTP 客户端
 
-**当前状态：通过（15 个文件，0 违规）。**
+**实测（2026-10-30 重跑）**：
+
+```
+检查文件数: 15
+✓ 通过：运行时代码无网络库导入、无 URL 字面量、无 HTTP 依赖
+```
+
+退出码 0。**状态：已验证。**
+
+> 脚本的覆盖范围与不覆盖的部分，见 [DATA-BOUNDARY.md §4.1](../docs/DATA-BOUNDARY.md#41-静态自动ci-每次跑)。
 
 ### 5.2 动态验证（需人工）
 
@@ -110,6 +132,9 @@ python scripts/check_no_network.py .
 ---
 
 ## 六、数据从哪来（离线复盘终端）
+
+> **当前是 API 层能力，界面未接。** 下面三节演示的是 Python 调用方式，
+> 不是在界面里点按钮。原因见 [§二 生效范围](#二两种形态)。
 
 `core/localio.py` 提供三个入口：
 
@@ -164,14 +189,30 @@ for tag, date, rows, cols, src in localio.list_panels():
 
 ## 七、已知限制
 
-1. **没有分钟级资金流历史**——原版靠联网取，现在只能靠导入。
-2. **板块成分股 / 全市场个股快照 / 龙头分析**依赖的成分股数据不可用，相关模块会跳过。
-3. **交易日历只读本地缓存**，缓存过期后按工作日推算兜底。
-4. 打包仍需在目标机器上进行（PyInstaller + PySide6 环境），本仓库不产出 exe。
+| # | 限制 | 状态 |
+|---|---|---|
+| 1 | **界面未接导入入口**：`app_main_v203.py` 未 import `localio`，用户无法在界面里导入数据；`FLOWLIVE_SHELL_MODE` 只在 `localio` 内部生效 | 未做（本轮只做文档） |
+| 2 | **没有分钟级资金流历史**：原版靠联网取，现在只能靠导入 | 设计限制 |
+| 3 | **板块成分股 / 全市场个股快照 / 龙头分析**依赖的成分股数据不可用，相关模块会跳过 | 设计限制 |
+| 4 | **交易日历只读本地缓存**，缓存过期后按工作日推算兜底 | 设计限制 |
+| 5 | **未打包**：PyInstaller + PySide6 环境需在目标机器上执行，本仓库不产出 exe | 未做 |
+| 6 | **未在真机验证断网启动 / 抓包**：需目标机器 | 未验证 |
+| 7 | **`pure` 形态未做界面验证**：只验证了 `localio.import_enabled()` 返回 `False` | 部分验证 |
 
 ---
 
-## 八、免责
+## 八、验证记录
+
+| 项目 | 命令 | 结果 | 状态 |
+|---|---|---|---|
+| 静态守卫 | `python flowlive-native/scripts/check_no_network.py .`（仓库根） | 15 文件 0 违规，退出码 0 | 已验证 |
+| 模块导入 | 见 [docs/SHELL.md §5.2](../docs/SHELL.md#52-导入冒烟10-秒) | 12 个模块导入正常，`source.active() == "local"` | 已验证 |
+| 离线回放链路 | 见 [docs/SHELL.md §5.3](../docs/SHELL.md#53-离线回放链路10-秒) | CSV 导入 → 面板 → 列表，形状 (2, 1) | 已验证 |
+| CI | [run 41040147833](https://github.com/LastTrainKing/realtime-market-monitor/actions/runs/41040147833) 的「Python 语法与导入」 | success | 已验证 |
+
+---
+
+## 九、免责
 
 本项目为学习研究用途，不构成投资建议。
 Shell 版的设计目标之一，就是彻底切断对第三方行情接口的访问。
