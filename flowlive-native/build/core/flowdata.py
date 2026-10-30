@@ -16,34 +16,14 @@ flowdata.py —— 板块分时资金流数据层
 """
 from __future__ import annotations
 
-import json, os, random, time, threading, urllib.error, urllib.parse, urllib.request
-import http.client, ssl
+# [shell] 网络模块已全部移除：本模块不具备任何联网取数能力。
+import json, os, random, time, threading
 from concurrent.futures import ThreadPoolExecutor
 
-# ------------------------------------------------------------------ 数据源配置
-# 主域 push2 会被限流（连接被重置），因此保留多域名做故障转移；
-# 最近成功的主机会被自动提到最前，减少无效重试。
-HOSTS = [
-    "https://push2.eastmoney.com",
-    "https://push2delay.eastmoney.com",
-]
-UT = "b2884a393a59ad64002292a3e90d46a5"
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-HDRS = {
-    "User-Agent": UA,
-    "Referer": "https://data.eastmoney.com/",
-    "Accept": "*/*",
-}
-
-# 本机环境变量里有 HTTP(S)_PROXY，且代理不稳定（RemoteDisconnected）。
-# 因此准备两个通道：直连优先，失败再走环境代理。
-_OPENER_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-_OPENER_ENV = urllib.request.build_opener()      # 默认行为：尊重 HTTP(S)_PROXY
-_OPENERS = [_OPENER_DIRECT, _OPENER_ENV]
-
-_HOST_ORDER = list(HOSTS)
-_HOST_LOCK = threading.Lock()
+# ------------------------------------------------------------------ 已移除：数据源配置
+# 原 HOSTS / UT / UA / HDRS / opener / 主机故障转移表 均已删除。
+# 这些常量只服务于联网取数，本版本无取数能力，故一并移除。
+_OPENERS = []
 
 # 写入同一交易日面板时，必须在进程内串行化：面板由 json + npy 两个文件共同表达，
 # 单文件原子替换不能阻止两个写者交错提交。锁粒度按绝对数据目录与 tag 隔离，
@@ -85,14 +65,6 @@ _SSL_CTX = None
 _SSL_LOCK = threading.Lock()
 
 
-def _ssl_ctx():
-    """复用同一个 SSL context —— 避免每次建连都重载一次 CA 证书库。"""
-    global _SSL_CTX
-    if _SSL_CTX is None:
-        with _SSL_LOCK:
-            if _SSL_CTX is None:
-                _SSL_CTX = ssl.create_default_context()
-    return _SSL_CTX
 
 
 _TLS = threading.local()
@@ -163,14 +135,6 @@ KA_FAIL_LIMIT_PROVEN = 30       # 已证实可用后，连续失败到此值才�
 KA_PROBE_TIMEOUT = 3.0
 
 
-def _ka_timeout(full_timeout):
-    """探测期返回较短超时；通道已证实可用则用调用方给的完整超时。"""
-    if _ka_proven():
-        return full_timeout
-    try:
-        return min(float(full_timeout), KA_PROBE_TIMEOUT)
-    except Exception:                                    # noqa: BLE001
-        return KA_PROBE_TIMEOUT
 
 _HOST_FAIL = {}                 # {host: {...}} —— 名字保留（诊断脚本在用）
 _HOST_FAIL_LOCK = threading.Lock()
@@ -212,215 +176,31 @@ HOST_COOLDOWN_MAX = 240.0       # 冷却退避上限
 HOST_DEAD_RETRY = 120.0         # 隔离后多久再放一次探测
 
 
-def _ka_off():
-    """快通道当前是否不可用。
-
-    ★ v3.0.6：不再是"永久布尔"。软关闭到期后**放行一次重探**，并把窗口
-      顺延 KA_PROBE_TIMEOUT 秒 —— 于是"重探"天然是**单个线程**的，
-      高并发下不会几十个线程同时冲进限流窗口。
-    """
-    with _KA_LOCK:
-        st = _KA_STATE
-        if not st["off"]:
-            return False
-        now = time.time()
-        if now < st["off_until"]:
-            return True
-        # 到期 → 半开：放这一个线程去探，其余线程在窗口内继续走 urllib
-        st["off_until"] = now + KA_PROBE_TIMEOUT
-        return False
 
 
-def _ka_proven():
-    """长连接通道是否**已经成功过**（成功过就不再回退 urllib，省时间）。"""
-    with _KA_LOCK:
-        return _KA_STATE["proven"]
 
 
-def _ka_note(ok):
-    """记录一次长连接结果，并按退避策略管理快通道的软关闭 / 恢复。
-
-    ★ v3.0.6 关键改动：`off` 可被**重探成功**复位。旧实现只置位不复位，
-      导致"启动初期撞上限流"= 整个进程永久慢 10 倍。
-    """
-    with _KA_LOCK:
-        st = _KA_STATE
-        if ok:
-            was_off = st["off"]
-            st["ok"] += 1
-            st["proven"] = True
-            st["off"] = False
-            st["off_until"] = 0.0
-            st["fail"] = 0
-            st["backoff"] = 0.0
-            if was_off:
-                print("  [net] keep-alive 通道恢复（重探成功），已回到快速通道",
-                      flush=True)
-            return
-
-        st["fail"] += 1
-        limit = KA_PROBE_LIMIT if not st["proven"] else KA_FAIL_LIMIT_PROVEN
-        if st["fail"] < limit:
-            return
-        # ★ 计数清零：让**退避**（而不是累积计数）决定下一次重探时机。
-        #   否则"连续失败 30 次"这种口径在限流期间会一直满足，
-        #   退避就永远走不到下一档。
-        st["fail"] = 0
-        if not st["off"]:
-            st["off"] = True
-            st["backoff"] = KA_RETRY_AFTER
-            print(f"  [net] keep-alive 通道暂不可用，退回 urllib（含代理）；"
-                  f"{KA_RETRY_AFTER:.0f}s 后自动重探", flush=True)
-        else:
-            st["backoff"] = min((st["backoff"] or KA_RETRY_AFTER) * 2.0,
-                                KA_RETRY_MAX)
-        st["off_until"] = time.time() + st["backoff"]
 
 
-def _host_state(h):
-    with _HOST_FAIL_LOCK:
-        return _HOST_FAIL.setdefault(
-            h, {"n": 0, "until": 0.0, "samples": [], "ok": 0, "fail": 0,
-                "round": 0, "dead_until": 0.0})
 
 
-def _host_cooling(h):
-    """该域名当前是否**不可用**（冷却中 / 已隔离）。
-
-    ★ 语义从"连续失败"换成"滑动窗口失败率"，见上方说明。
-    """
-    st = _host_state(h)
-    now = time.time()
-    with _HOST_FAIL_LOCK:
-        return now < st["until"] or now < st["dead_until"]
 
 
-def _host_dead(h):
-    """是否处于"隔离"状态（本进程内从未成功过，暂时不参与常规轮转）。"""
-    st = _host_state(h)
-    with _HOST_FAIL_LOCK:
-        return time.time() < st["dead_until"]
 
 
-def _mark_host(h, ok):
-    """记录域名级成败，按滑动窗口失败率决定冷却 / 隔离 / 恢复。
-
-    ★ 关键点（都是 v3.0.6 明确修的）：
-      ① 判定用**窗口失败率**而非连续计数 —— 并发高时不再被瞬时抖动误伤；
-      ② 冷却期内**不再延长**冷却（旧实现会 `until = now + 60` 无限续期）；
-      ③ 成功一次**立即**清空冷却、退避档位与隔离状态。
-    """
-    st = _host_state(h)
-    now = time.time()
-    with _HOST_FAIL_LOCK:
-        smp = st["samples"]
-        smp.append((now, bool(ok)))
-        cut = now - HOST_WINDOW
-        i = 0
-        while i < len(smp) and smp[i][0] < cut:
-            i += 1
-        if i:
-            del smp[:i]
-
-        if ok:
-            st["n"] = 0
-            st["ok"] += 1
-            st["until"] = 0.0
-            st["round"] = 0
-            st["dead_until"] = 0.0
-            return
-
-        st["n"] += 1
-        st["fail"] += 1
-        if now < st["until"] or now < st["dead_until"]:
-            return                       # ② 已在冷却/隔离期，不重复判定、不续期
-
-        n = len(smp)
-        if n < HOST_MIN_SAMPLES:
-            return
-        fails = sum(1 for _t, o in smp if not o)
-        ratio = fails / float(n)
-        if st["round"] == 0 and ratio < HOST_FAIL_RATIO:
-            return
-
-        if st["ok"] == 0 and ratio >= HOST_NEVER_OK_RATIO:
-            st["dead_until"] = now + HOST_DEAD_RETRY
-            st["round"] += 1
-            print(f"  [net] 域名 {h.split('//')[-1]} 从未成功且失败率 "
-                  f"{ratio:.0%}，隔离 {HOST_DEAD_RETRY:.0f}s", flush=True)
-            return
-
-        st["round"] += 1
-        st["until"] = now + min(
-            HOST_COOLDOWN_BASE * (2 ** (st["round"] - 1)), HOST_COOLDOWN_MAX)
 
 
-def _conn_pool():
-    pool = getattr(_TLS, "pool", None)
-    if pool is None:
-        pool = _TLS.pool = {}
-    return pool
 
 
-def _close_conn(host):
-    """丢弃本线程到 host 的连接（连接已损坏 / 需要重建时调用）。"""
-    c = _conn_pool().pop(host, None)
-    if c is not None:
-        try:
-            c.close()
-        except Exception:                            # noqa: BLE001
-            pass
 
 
 def close_connections():
-    """关闭**本线程**持有的全部长连接。
-
-    build_panel 收尾时调用一次，避免把连接挂到进程退出。
-    （线程池里的 worker 线程结束时会自动回收，这里主要照顾调用线程自己。）
-    """
-    pool = _conn_pool()
-    for h in list(pool):
-        c = pool.pop(h, None)
-        if c is not None:
-            try:
-                c.close()
-            except Exception:                        # noqa: BLE001
-                pass
-
-
-def _host_of(url):
-    return url.split("://", 1)[1] if "://" in url else url
-
-
-def _keepalive_once(host, path, timeout):
-    """用长连接发一次 GET，返回响应体文本；失败返回 None。
-
-    内部对"连接被服务端关闭"做了透明重试：第一次若复用失败，
-    丢弃该连接、新建一条再试一次 —— 这样 keep-alive 的固有
-    RemoteDisconnected 不会冒泡成一次可见的请求失败。
-    ★ 单次调用最多重建 1 次，因此最坏耗时 = 2 × timeout，
-      不会因为反复重试而把整体抓取拖垮。
-    """
-    h = _host_of(host)
-    pool = _conn_pool()
-    for attempt in (0, 1):
-        conn = pool.get(h)
-        if conn is None:
-            conn = http.client.HTTPSConnection(h, timeout=timeout,
-                                               context=_ssl_ctx())
-            pool[h] = conn
-        try:
-            conn.request("GET", path, headers=HDRS)
-            r = conn.getresponse()
-            body = r.read()
-            if r.status != 200 or not body:
-                _close_conn(h)                   # 非 200 保守丢弃连接
-                return None
-            return body.decode("utf-8", "ignore")
-        except Exception:                        # noqa: BLE001
-            _close_conn(h)                       # 坏连接 → 丢弃，下轮重建
-            continue
+    """[shell] 无连接可关。保留接口以兼容 UI 退出流程。"""
     return None
+
+
+
+
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -508,69 +288,8 @@ def save_panel(tag, meta, mat, data_dir=None):
         _atomic_save_npy(os.path.join(root, f"panel_{tag}.npy"), mat)
 
 
-def _load_hosts():
-    """按优先级返回**本轮值得尝试**的域名。
-
-    ★★ v3.0.6 语义变更：冷却中的域名从「排最后」改成「先不用」。
-      旧实现是"冷却中的**排到最后**"—— 也就是**每个请求仍会把它试一遍**。
-      新实现：只要还有**可用**域名，就**只返回可用的**；全部不可用时
-      退化**只探一个**（半开探测，见下方实测说明），
-      保证不会出现"一个都不试、直接失败"。
-      已隔离的域名（`_host_dead`）在"还有别的选择"时一律不返回。
-
-    ★★★ 实测记录（务必保留，避免后人重犯）：
-      本版**曾经**在可用域名之间做"轮转"（想让两个域名的独立限流阈值
-      都更晚触发），**实测证明这是错的，已回退**：
-        · 同一时段、同一 limit=150 的 A/B（2026-09-23 14:05）——
-          粘性优先（本实现）：**3.5s**，150/150，172 次尝试、20 次失败；
-          轮转版本        ：**42.8s**，148/150，295 次尝试、140 次失败，
-                            105 次冷却命中、21.2s 纯重试等待。
-        · 原因：两个域名的**质量并不对等**。主域 push2 在被限流之外基本都能
-          服务；备用域 push2delay 则经常拒绝。轮转把约一半流量**首先**推给
-          更差的那个，于是每个请求平均要失败 1 次才落到好域名上 ——
-          额外往返 + 重试停顿，比"省下来的那点限流风险"贵得多。
-      → 结论：**按最近成功优先的粘性策略**才是对的（`_promote_host` 维护
-        `_HOST_ORDER`，本函数只负责把不可用的摘出去）。
-        粘性 + 冷却剔除的组合，在"主域被限流"时仍能整体切到备用域，
-        在"主域正常"时则完全不碰备用域 —— 两种情形都是最优。
-    """
-    with _HOST_LOCK:
-        hosts = list(_HOST_ORDER)
-    if not hosts:
-        return hosts
-    alive, cooling, dead = [], [], []
-    for h in hosts:
-        if _host_dead(h):
-            dead.append(h)
-        elif _host_cooling(h):
-            cooling.append(h)
-        else:
-            alive.append(h)
-    if alive:
-        return alive
-    # ★★ v3.0.6 追加：**没有任何域名可用时，只探一个**，不把全部不可用域名都打一遍。
-    #
-    #   实测（2026-09-23 16:55，东财全站对本机 IP 阻断期间）：
-    #     `build_panel(limit=100, deadline=60)` 首轮耗时 **64s**，其中
-    #     **urllib 尝试 224 次** —— 因为两个域名都已隔离，而本函数仍返回两个，
-    #     于是每个板块的每次尝试都要在它们身上各跑一遍（各自 ~130ms 拒绝
-    #     + urllib 新建 TLS ~300ms），全是白跑。
-    #
-    #   "隔离/冷却"的语义本来就该是**半开探测**：放**一个**请求去试，
-    #   成功了就恢复（`_mark_host(ok=True)` 会清掉隔离并 `_promote_host`），
-    #   失败了继续按退避等待 —— 而不是把每个域名都当成可用的打。
-    #   这样"接口全死"场景的无效尝试数直接减半。
-    if cooling:
-        return cooling[:1]
-    return (dead or hosts)[:1]
 
 
-def _promote_host(h):
-    """把最近成功的域名提到最前，降低后续请求的失败率。"""
-    with _HOST_LOCK:
-        if h in _HOST_ORDER:
-            _HOST_ORDER.remove(h)
-            _HOST_ORDER.insert(0, h)
 
 
 # ---------------------------------------------------------------- 兼容通道健康度
@@ -593,96 +312,14 @@ _OPENER_STATE = [{"fail": 0, "off_until": 0.0, "backoff": 0.0, "ok": 0}
 _OPENER_LOCK = threading.Lock()
 
 
-def _opener_rule(i):
-    return OPENER_RULES[i] if i < len(OPENER_RULES) else OPENER_RULES[-1]
 
 
-def _opener_usable(i):
-    """第 i 条兼容通道当前是否可用；软关闭到期时**放行一次**重探。"""
-    with _OPENER_LOCK:
-        st = _OPENER_STATE[i]
-        if not st["off_until"]:
-            return True
-        now = time.time()
-        if now < st["off_until"]:
-            return False
-        # 到期 → 半开：放一个请求去探；同时**先把退避翻倍并顺延**，
-        # 这样"再失败"时不会几秒后又来一次（失败路径不会重复续期）。
-        st["backoff"] = min(max(st["backoff"], _opener_rule(i)[1]) * 2.0,
-                            OPENER_RETRY_MAX)
-        st["off_until"] = now + st["backoff"]
-        return True
 
 
-def _opener_note(i, ok):
-    """记录第 i 条兼容通道的成败。"""
-    with _OPENER_LOCK:
-        st = _OPENER_STATE[i]
-        now = time.time()
-        if ok:
-            st["fail"] = 0
-            st["off_until"] = 0.0
-            st["backoff"] = 0.0
-            st["ok"] += 1
-            return
-        st["fail"] += 1
-        if st["off_until"] and now < st["off_until"]:
-            return                      # 冷却/半开期内不重复判定、不续期
-        limit, base = _opener_rule(i)
-        if st["fail"] < limit:
-            return
-        st["fail"] = 0
-        st["backoff"] = base if not st["backoff"] else min(
-            st["backoff"] * 2.0, OPENER_RETRY_MAX)
-        st["off_until"] = now + st["backoff"]
 
 
-def _opener_reset():
-    """复位兼容通道健康度（测试用）。"""
-    with _OPENER_LOCK:
-        for st in _OPENER_STATE:
-            st.update(fail=0, off_until=0.0, backoff=0.0, ok=0)
 
 
-def _open_once(url, timeout):
-    """依次尝试「直连 -> 环境/系统代理」，任一成功即返回响应体文本。
-
-    ★★ v3.0.6 实测修复（这是"接口不可用时特别慢"的**真正元凶**）：
-      实测（2026-09-23 17:00，东财对本机 IP 阻断期间）`_open_once` **单次 2313ms**：
-        · 直连 opener        → RemoteDisconnected，**242ms**（服务端快速拒绝）
-        · "环境代理" opener  → URLError，**2048ms**
-      而且 `env | grep -i proxy` 显示**没有任何代理环境变量**。那 2 秒来自
-      `urllib.request.build_opener()` 会去读 **Windows 系统代理**（注册表
-      `Internet Settings`）——本机系统里配了一个不可用的代理，于是兼容通道
-      每次都要在它身上等满。
-      【代价有多大】"接口全死"场景实测 `build_panel(limit=100)` 首轮 64s 里，
-      urllib 尝试 147 次 × 2.3s ≈ **338 线程·秒**，是那 60s 墙钟的主要来源。
-      也就是说：**接口不可用时，程序有近一半时间是在等一个用不上的代理。**
-
-    【修法】给兼容通道加上与快通道**同一套纪律**：连续失败 N 次 → 软关闭 +
-    指数退避重探（15→30→60→120s 封顶），到期只放**一个**请求去探。
-      · 代理专网环境不受影响：那种环境下直连恒失败、代理恒成功，
-        成功会立刻把计数与退避清零，永远不会被关掉；
-      · 本机这种"配了个死代理"的情况：3 次失败后 15s 内不再碰它，
-        单次 `_open_once` 从 2313ms 降到 **242ms（约 9.6×）**。
-    """
-    last_err = None
-    for i, opener in enumerate(_OPENERS):
-        if not _opener_usable(i):
-            continue
-        try:
-            req = urllib.request.Request(url, headers=HDRS)
-            with opener.open(req, timeout=timeout) as r:
-                body = r.read().decode("utf-8", "ignore")
-            if body:
-                _opener_note(i, True)
-                return body, None
-            _opener_note(i, False)
-        except Exception as e:                       # noqa: BLE001
-            last_err = e
-            _opener_note(i, False)
-            continue
-    return None, last_err
 
 
 # ---------------------------------------------------------------- 并发闸门（v3.0.6）
@@ -847,66 +484,12 @@ _BREAKER = {"samples": [], "until": 0.0, "trips": 0, "hard": False}
 _BREAKER_LOCK = threading.Lock()
 
 
-def _breaker_open():
-    """熔断是否打开（打开时只发首次尝试，不做重试）。"""
-    with _BREAKER_LOCK:
-        return time.time() < _BREAKER["until"]
 
 
-def _breaker_hard():
-    """是否处于**硬熔断**（连首次尝试也不发，等冷却到期再探）。"""
-    with _BREAKER_LOCK:
-        return bool(_BREAKER["hard"]) and time.time() < _BREAKER["until"]
 
 
-def _breaker_note(ok):
-    """记录一次请求结果；窗口内失败率过高则打开熔断，连续多轮则升级为硬熔断。"""
-    now = time.time()
-    with _BREAKER_LOCK:
-        st = _BREAKER
-        smp = st["samples"]
-        smp.append((now, bool(ok)))
-        cut = now - BREAKER_WINDOW
-        i = 0
-        while i < len(smp) and smp[i][0] < cut:
-            i += 1
-        if i:
-            del smp[:i]
-        if ok:
-            # ★ 任何一次成功都**立刻**把升级档位清零（恢复正常）
-            st["trips"] = 0
-            st["hard"] = False
-            return
-        n = len(smp)
-        if n < BREAKER_MIN_SAMPLES:
-            return
-        fails = sum(1 for _t, o in smp if not o)
-        ratio = fails / float(n)
-        if ratio < BREAKER_FAIL_RATIO or now < st["until"]:
-            return
-        st["trips"] += 1
-        cd = BREAKER_COOLDOWN
-        if st["trips"] >= BREAKER_HARD_TRIPS and not st["hard"]:
-            st["hard"] = True
-            cd *= BREAKER_HARD_FACTOR
-            print(f"  [net] 全局熔断升级为**硬熔断**：连续 {st['trips']} 轮零成功，"
-                  f"{cd:.0f}s 内不再发任何请求（含首次尝试）", flush=True)
-        elif st["hard"]:
-            cd *= BREAKER_HARD_FACTOR
-        st["until"] = now + cd
-        if not st["hard"]:
-            print(f"  [net] 全局熔断：近 {n} 次失败率 {ratio:.0%}，"
-                  f"{cd:.0f}s 内只发首次尝试（不再重试）", flush=True)
-        smp.clear()
 
 
-def _breaker_reset():
-    """复位熔断状态（测试用）。"""
-    with _BREAKER_LOCK:
-        _BREAKER["samples"] = []
-        _BREAKER["until"] = 0.0
-        _BREAKER["trips"] = 0
-        _BREAKER["hard"] = False
 
 # ★ 全量建表的全局时限（秒）。0 表示不限制（仅测试用）。
 #   实测教训：旧实现无上限，撞上持续限流时 1000 个板块会一个个重试到
@@ -925,102 +508,13 @@ PANEL_KEEP_RATIO = 0.6
 ALT_MERGE_RATIO = 0.6
 
 
-def _retry_pause():
-    """失败重试之间的**短抖动**停顿。
-
-    ★ v3.0.6（RC-4）：旧实现是 `time.sleep(0.4 * (i + 1))` —— 固定且偏长。
-      单个失败板块最坏要在这里睡掉 1.2s，而 build_panel 连续遇到几十个
-      失败板块时，累积起来就是几十秒的**纯等待**。
-      改成 0.12~0.30s 抖动，作用有三：
-        ① 仍然"不贴着限流窗口猛打"（保留原意图）；
-        ② 显著缩短单个失败请求的占位时间，把 worker 尽快还给队列；
-        ③ 抖动而非固定 —— 避免所有线程**同频**重试。固定节奏会让
-           8 个 worker 在同一个瞬间一起再打一轮，反而更容易再次触发限流。
-    """
-    time.sleep(0.12 + random.random() * 0.18)
 
 
 def _get(path_or_url, tries=3, timeout=15):
-    """传路径时会自动在多域名间做故障转移；失败返回 None。
-
-    ★ 取数路径（v1.2.1）：**优先长连接复用**（快 10 倍，见长连接池注释），
-      长连接通道整体不可用时自动退回 urllib（保留环境代理兼容性）。
-    ★★ v2.0.9：**绝对 URL 也走长连接池** —— 此前 fetch_spot_batch /
-      opensnap._fetch_list 等用绝对 URL 的调用永远走 urllib 逐请求建连
-      （每次 TCP+TLS 握手 ~100-300ms），白白放弃连接复用。现在把绝对
-      URL 拆成 host+path 后同样优先长连接，失败仍回退 urllib（保代理）。
-    ★★ v3.0.6：外面包一层薄壳，把**每次请求的成败**喂给并发闸门做 AIMD。
-      包壳而不是在每个 return 点插一句，是为了保证"**一次调用恰好一个样本**"
-      —— 否则多域名重试会一次调用报出好几个样本，把失败率口径搞乱。
-      ★ 硬熔断时直接返回，**不计入样本** —— 否则"熔断造成的失败"会自己
-        把熔断续期下去（自我强化），这是这类机制最常见的死锁。
-    """
-    if _breaker_hard():
-        return None
-    j = _get_inner(path_or_url, tries=tries, timeout=timeout)
-    _breaker_note(j is not None)
-    _NET_GATE.note(j is not None)
-    return j
-
-
-def _get_inner(path_or_url, tries=3, timeout=15):
-    """`_get` 的真实实现（不含并发闸门记账，便于单测直接调用）。"""
-    if path_or_url.startswith("http"):
-        # 绝对 URL：拆出 host 与 path，优先长连接；失败回退 urllib（含代理）
-        _scheme, _rest = path_or_url.split("://", 1)
-        host, path = _rest.split("/", 1)
-        path = "/" + path
-        for i in range(tries):
-            if i and _breaker_open():
-                break                # ★ v3.0.6：熔断打开 → 不再重试（省掉空转）
-            body = None
-            if not _ka_off():
-                body = _keepalive_once(host, path, _ka_timeout(timeout))
-                _ka_note(body is not None)
-                if body is not None:
-                    _mark_host(host, True)       # ★ v3.0.6：绝对 URL 也计入域名健康度
-                    try:
-                        return json.loads(body)
-                    except Exception:                # noqa: BLE001
-                        pass
-            body, _err = _open_once(path_or_url, timeout)
-            if body is not None:
-                _mark_host(host, True)
-                try:
-                    return json.loads(body)
-                except Exception:                    # noqa: BLE001
-                    pass
-            _mark_host(host, False)
-            _retry_pause()
-        return None
-
-    for i in range(tries):
-        if i and _breaker_open():
-            break                    # ★ v3.0.6：熔断打开 → 不再重试（省掉空转）
-        for h in _load_hosts():
-            body = None
-            # ---- 主通道：长连接复用（快，见上方长连接池说明）
-            if not _ka_off():
-                body = _keepalive_once(h, path_or_url, _ka_timeout(timeout))
-                _ka_note(body is not None)
-            # ---- 兼容通道：仅在通道未证实可用时才回退 urllib
-            #   ★ 为什么用 `not _ka_proven()` 而不是"每次失败都回退"：
-            #     一旦长连接成功过，失败就基本是**主机被限流**（实测两个
-            #     通道会一起失败），此时再走 urllib 只是白等 2×timeout。
-            #     直接换下一个域名更快 —— 这正是 _load_hosts 在做的。
-            if body is None and (_ka_off() or not _ka_proven()):
-                body, _err = _open_once(h + path_or_url, timeout)
-            _mark_host(h, body is not None)
-            if body is None:
-                continue
-            try:
-                j = json.loads(body)
-            except Exception:                        # noqa: BLE001
-                continue
-            _promote_host(h)
-            return j
-        _retry_pause()
+    """[shell] 数据读取能力已移除。恒返回 None，调用方按原有失败路径降级。"""
     return None
+
+
 
 
 # ---------------------------------------------------------------- 板块清单
@@ -1063,55 +557,8 @@ def _save_sectors_cache(kind, rows):
 
 
 def list_sectors(kind="industry", page_size=100):
-    """kind: industry(行业) / concept(概念)
-
-    ★★ v2.0.2：抓不到时回退本地缓存 sectors.json。
-      旧行为是"抓不到就返回空列表"，上层随即 raise「板块清单为空」，
-      整个面板建不起来 —— 而板块清单实际上是**静态数据**，
-      本地存过一份就足以把面板跑起来。
-
-    ★★ v3.0.6：接入多源层。当前源不是东财时（见 core/source.py），
-      走替代源的实现；替代源也失败才落回东财。
-    """
-    # ---- 多源路由（v3.0.6）----
-    try:
-        import source as _src
-        if _src.uses_alt():
-            got = _src.tencent_list_sectors(kind, page_size)
-            if got:
-                _save_sectors_cache(kind, got)
-                print(f"  [source] {_src.active()} 源：{kind} {len(got)} 个板块",
-                      flush=True)
-                return got
-            print(f"  [source] {_src.active()} 源未取到 {kind} 清单，"
-                  f"回落东财通道", flush=True)
-    except Exception as e:                               # noqa: BLE001
-        print(f"  [source] 替代源 list_sectors 异常："
-              f"{type(e).__name__}: {e}", flush=True)
-
-    fs = "m:90+t:2" if kind == "industry" else "m:90+t:3"
-    out, pn = [], 1
-    while True:
-        url = (f"/api/qt/clist/get?pn={pn}&pz={page_size}&po=1&np=1&fltt=2&invt=2"
-               f"&fid=f62&fs={fs}&fields=f12,f14,f62")
-        j = _get(url)
-        if not j or not j.get("data") or not j["data"].get("diff"):
-            break
-        diff = j["data"]["diff"]
-        for d in diff:
-            out.append((f"90.{d['f12']}", d["f12"], d["f14"], kind))
-        if len(diff) < page_size:
-            break
-        pn += 1
-        if pn > 12:
-            break
-    if out:
-        _save_sectors_cache(kind, out)
-        return out
-    cached = _load_sectors_cache().get(kind) or []
-    if cached:
-        return list(cached)
-    return out
+    """[shell] 数据读取能力已移除，只返回本地板块清单缓存。"""
+    return list(_load_sectors_cache().get(kind) or [])
 
 
 # ---------------------------------------------------------------- 分时资金流
@@ -1122,69 +569,13 @@ LAST_DATA_DATE = None
 
 
 def fetch_sector_kline(secid, tries=2, timeout=8):
-    """返回 [(HH:MM, 主力净流入, 小单, 中单, 大单, 超大单)]，单位：元
-
-    ★ v1.2.1 调参：默认从 tries=3/timeout=15 收到 **tries=2/timeout=8**。
-      这是**批量抓取**（~1000 个板块）的默认值，一个板块拿不到就跳过
-      （build_panel 里 `if rows:` 本来就允许缺），没必要为它重试 3 次
-      每次等 15 秒 —— 单个卡住的板块会占着 worker 线程，直接拖长整体耗时。
-      长连接复用后单请求约 50~300ms，8 秒超时已经非常宽松。
-    """
-    global LAST_DATA_DATE
-    # ---- 多源路由（v3.0.6）----
-    # ★ 替代源（腾讯）**没有**分钟级资金流历史 —— 这是能力差异，不是故障。
-    #   如实返回空列表，由 build_panel 走降级路径（靠本地面板 + 逐分钟累积），
-    #   绝不用"点位"等别的东西冒充资金流。
-    try:
-        import source as _src
-        if _src.uses_alt():
-            _warn_no_minute_history(_src.active())
-            return []
-    except Exception:                                    # noqa: BLE001
-        pass
-    url = (f"/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid={secid}"
-           f"&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56&ut={UT}")
-    j = _get(url, tries=tries, timeout=timeout)
-    if not j or not j.get("data") or not j["data"].get("klines"):
-        return []
-    rows = []
-    for line in j["data"]["klines"]:
-        p = line.split(",")
-        if len(p) < 6:
-            continue
-        if LAST_DATA_DATE is None and len(p[0]) >= 10:
-            LAST_DATA_DATE = p[0][:10].replace("-", "")
-        hm = p[0][-5:]
-        try:
-            rows.append((hm, float(p[1]), float(p[2]), float(p[3]), float(p[4]), float(p[5])))
-        except ValueError:
-            continue
-    return rows
+    """[shell] 数据读取能力已移除。恒返回空列表。"""
+    return []
 
 
 def fetch_index_trend(secid="1.000001"):
-    """指数分时（1分钟）：[(HH:MM, 点位, 成交量)]"""
-    # ---- 多源路由（v3.0.6）----
-    try:
-        import source as _src
-        if _src.uses_alt():
-            return _src.tencent_fetch_index_trend(secid)
-    except Exception as e:                               # noqa: BLE001
-        print(f"  [source] 替代源 fetch_index_trend 异常："
-              f"{type(e).__name__}: {e}", flush=True)
-        return []
-    url = (f"/api/qt/stock/trends2/get?secid={secid}&fields1=f1,f2,f3,f7"
-           f"&fields2=f51,f53,f56&iscr=0&ndays=1&ut={UT}")
-    j = _get(url)
-    if not j or not j.get("data") or not j["data"].get("trends"):
-        return []
-    out = []
-    for line in j["data"]["trends"]:
-        p = line.split(",")
-        if len(p) < 3:
-            continue
-        out.append((p[0][-5:], float(p[1]), float(p[2])))
-    return out
+    """[shell] 数据读取能力已移除。恒返回空列表。"""
+    return []
 
 
 # ★ 总览顶栏展示的指数（v1.1.5 用户需求：上证指数旁增加东方财富全A）。
@@ -1231,28 +622,13 @@ def index_secids():
 
 
 def fetch_all_index_trends():
-    """抓取全部展示指数：{"sh": [(hm,px,vol)…], "all": [...], "meta": {...}}
-
-    单个指数失败不影响其他（返回空列表，界面按"缺"处理），
-    与 HTML 版 HEADER_INDEXES 的行为一致。
-    """
-    out = {}
-    # ★ v3.0.6：指数清单改为**按当前数据源**给出（替代源下"东财全A"要用
-    #   别的标的顶替，标签同步改，见 index_secids / source.T_INDEX_MAP）。
-    _secids = index_secids()
-    for key, secid, label in _secids:
-        try:
-            out[key] = fetch_index_trend(secid)
-        except Exception:                                # noqa: BLE001
-            out[key] = []
-    out["meta"] = {k: {"secid": s, "label": lb} for k, s, lb in _secids}
-    return out
+    """[shell] 数据读取能力已移除。恒返回空字典。"""
+    return {}
 
 
 def fetch_spot_index(secid="1.000001"):
-    url = f"/api/qt/stock/get?secid={secid}&fields=f43,f44,f45,f46,f60,f170,f169&ut={UT}&fltt=2"
-    j = _get(url)
-    return (j or {}).get("data") or {}
+    """[shell] 数据读取能力已移除。恒返回空字典。"""
+    return {}
 
 
 # ---------------------------------------------------------------- 批量快照
@@ -1495,373 +871,23 @@ def save_spot_leaders(tag, spot):
 
 
 def refresh_spot_leaders(tag="today"):
-    """只取「龙头快照」（领涨 / 领跌股），**不动面板**。
-
-    用途：全量建表之后补一次。此时面板已经是最新的一整份分时，
-    但 `spot_leaders_*.json` 还不存在 —— 界面的「龙头选手」列会是空的
-    （要等到下一次增量刷新才有内容）。首次使用时那一列空着最显眼，
-    所以建表后顺手补一发。
-
-    成本：与增量刷新同量级（5~6 次请求 / 约 0.35 秒）——
-    因为用的是同一个批量快照通道，只是不写面板。返回写入的板块数。
-    """
-    p_json = os.path.join(DATA, f"panel_{tag}.json")
-    try:
-        with open(p_json, encoding="utf-8") as f:
-            codes = json.load(f).get("codes") or []
-    except Exception:                                    # noqa: BLE001
-        return 0
-    if not codes:
-        return 0
-    spot = fetch_spot_batch(codes, detail=True)
-    return save_spot_leaders(tag, spot)
+    """[shell] 数据读取能力已移除。不产生新榜单。"""
+    return None
 
 
 def fetch_spot_batch(secids, detail=False, workers=None, tries=3, names=None):
-    """批量取"当日累计主力净流入"快照。
-
-    detail=False → `{secid: 净额(元)}`（历史行为，向后兼容）
-    detail=True  → `{secid: {net, lead, lead_code, lead_pct, lag, lag_code}}`
-
-    names: 可选 `{secid: 板块名}`。★ v3.0.6 新增 —— 替代源（腾讯）按**名称**
-           提供数据，没有名称就无法把值贴回面板的列；缺失时替代源返回空结果
-           并如实说明，**不猜着填**。
-
-    ★★ v2.0.1 新增 detail 参数：把「领涨股 / 领跌股」一并带回来。
-      为什么不另开一次请求：同一次 ulist.np 请求里多取几个字段**不增加
-      请求次数**（字段数不影响耗时），另开一次反而会让盘中刷新多花一个 RTT。
-      而「龙头选手」列需要的信息恰好就在这几个字段里（见 SPOT_FIELDS 注释）。
-
-    ★ 必须带 `ut=` —— 漏掉会返回 f62=None（实测：不带 ut 的 stock/get
-      返回 0；ulist.np 不带 ut 直接给 None）。这是本函数唯一的坑。
-
-    ★★ v3.0.4（本次重构）：**分片请求改为并行**。
-      改动前：`for i in range(0, len(secids), SPOT_BATCH)` 是**串行**的 ——
-      1000 个板块 / 200 一批 = 5 次请求**逐个排队**，总耗时 = 5 × RTT。
-      打桩实测（RTT=60ms）：**302ms**，其中 300ms 全是在等网络，CPU 零占用。
-      改动后：分片用 ThreadPoolExecutor 并发发出，总耗时 ≈ 1 × RTT + 抖动。
-      同一打桩条件下理论下限 **60ms（5.0× 提速）**。
-
-      ★ 为什么这里安全（两条都已核实）：
-        ① `_TLS = threading.local()` —— 连接池**每线程一条** HTTPSConnection，
-           不存在多线程抢同一条连接的竞争；
-        ② 结果按 secid 写入**各自指定的 dict 项**，无共享可变状态。
-           （不是"后写覆盖先写"，因为每个 secid 只出现在一个分片里。）
-
-        ★★ v3.0.6 口径说明（回应"build_panel 16/24 并发与这里 5 并发不一致"）：
-          两者**保持不同是刻意的**，但 build_panel 那边已从"固定 24"改成
-          `_NET_GATE` 的 AIMD 自适应（起点 10，区间 [3, 调用方给的上限]）。
-          为什么这里不共用同一个闸门：
-            · 本函数是**短突发**（真实盘中恰好 5 个分片，一次发完就结束，
-              总在途 ≤ 5），闸门对它没有调节空间；
-            · build_panel 是**长流水**（1000 次请求持续几分钟），
-              它才是会把域名推到限流阈值的那一方，也才是需要 AIMD 的一方。
-          换句话说：这里的 5~6 是"分片数的自然上限"，那边的 10 是"可自适应的
-          起点"—— 两个数字含义不同，不是口径打架。
-
-        ★★ v3.0.6（tries 默认 2 → 3）：**这一步失败的代价极高，值得多试。**
-          它是"快速先行版"的全部数据来源（见 refresh_panel_spot 的 allow_gap）：
-          3~5 个分片只要有**一个**没回来，整次快照就不算成功，用户就得回去
-          干等几分钟的全量补抓。而每次尝试在"被拒"时只要 ~150ms
-          （服务端快速拒绝，不是超时），多试一次的成本可以忽略。
-          实测依据（2026-09-23 15:0x 的请求头对比探针）：被拒是服务端**速率
-          限制**，且通过率呈"连拒几次、再放行几次"的桶式节奏 —— 单次成功
-          约 40%，所以"多试几次"对"整批都成功"的概率提升很明显
-          （单分片 1 次 40% → 3 次约 78%；3 个分片全成功 6% → 约 48%）。
-          ★ 同一次探针还确认了两件**不要做**的事，写在这里免得后人再试：
-            · 加 `Accept-Encoding` → 通过率直接掉到 0/5；
-            · 去掉 Referer/Accept（只留 UA）→ 同样 0/5。
-            也就是说**现有请求头组合是对的**，别再"优化"它。
-    """
-    if not secids:
-        return {}
-
-    # ---- 多源路由（v3.0.6）----
-    try:
-        import source as _src
-        if _src.uses_alt():
-            got = _src.tencent_fetch_spot_batch(secids, detail=detail,
-                                                names=names)
-            print(f"  [source] {_src.active()} 源：{len(got)}/{len(secids)} "
-                  f"个板块取到当前累计主力净额", flush=True)
-            return got
-    except Exception as e:                               # noqa: BLE001
-        print(f"  [source] 替代源 fetch_spot_batch 异常："
-              f"{type(e).__name__}: {e}", flush=True)
-        return {}
-
-    def _num(x):
-        return float(x) if isinstance(x, (int, float)) else None
-
-    chunks = [secids[i:i + SPOT_BATCH]
-              for i in range(0, len(secids), SPOT_BATCH)]
-    # 并发度 = 分片数与上限的较小者（分片少时不需要那么多线程）
-    w = int(workers) if workers else min(6, len(chunks))
-    w = max(1, min(w, len(chunks)))
-
-    def _one(chunk):
-        """取一个分片，返回 [(secid, parsed_value), ...]。不碰共享状态。"""
-        ids = ",".join(chunk)
-        url = (f"/api/qt/ulist.np/get?fltt=2&invt=2&fields={SPOT_FIELDS}"
-               f"&secids={ids}&ut={UT}")
-        j = _get(url, tries=tries, timeout=8)
-        diff = ((j or {}).get("data") or {}).get("diff") or []
-        got = []
-        for d in diff:
-            code = d.get("f12")
-            if not code:
-                continue
-            v = d.get("f62")
-            secid = f"90.{code}"
-            if not detail:
-                if isinstance(v, (int, float)):
-                    got.append((secid, float(v)))
-                continue
-            got.append((secid, {
-                "net": _num(v),
-                "lead": str(d.get("f128") or ""),
-                "lead_code": str(d.get("f140") or ""),
-                "lead_pct": _num(d.get("f136")),
-                "lag": str(d.get("f207") or ""),
-                "lag_code": str(d.get("f208") or ""),
-            }))
-        return got
-
-    out = {}
-    if len(chunks) == 1:
-        # ★ 只有**一个分片**时才走单线程直取。
-        #   ⚠ 这里必须判 `len(chunks) == 1`，**不能**判 `w == 1`：
-        #     w=1 的语义是"用 1 个线程把所有分片串行发完"（等价于旧行为），
-        #     不是"只发第一个分片"。写错会**静默丢掉后面所有分片的数据**
-        #     （1000 个板块只回 200 个），而且不报错 —— 属于最危险的缺陷类型。
-        for sid, val in _one(chunks[0]):
-            out[sid] = val
-        return out
-    with ThreadPoolExecutor(max_workers=w) as ex:
-        for got in ex.map(_one, chunks):
-            for sid, val in got:
-                out[sid] = val
-    return out
+    """[shell] 数据读取能力已移除。恒返回空字典。"""
+    return {}
 
 
 def refresh_panel_spot(tag="today", workers=6, on_progress=None, allow_gap=False):
-    """**增量刷新**：只把最新一分钟的值接到已有面板上（v1.2.3）。
-
-    与 build_panel 的区别：
-      build_panel        1000 次请求 / 2000~3500ms —— 拉全部分时（建底表用）
-      refresh_panel_spot    5 次请求 /   ~300ms —— 只取当前累计值（高频刷新用）
-
-    返回 (meta, mat)；任何一步失败都返回 (None, None)，由调用方决定
-    是否退回全量抓取 —— **绝不半途改坏已有面板**。
-
-    allow_gap（v3.0.6 新增）：
-      False（默认，保持旧语义）→ 落后超过 SPOT_MAX_GAP_MIN 分钟就返回
-        (None, None)，交回全量重抓。
-      True → 即使落后很多也**先把当前这一分钟补上**，中间缺失的分钟
-        写成 NaN 占位行（渲染层会断开曲线）。用途是"全量补抓开始前的
-        快速先行版"：限流环境下全量要跑几分钟，而当前这一刻的真实资金流
-        只要 5~6 次请求 / 约 0.3 秒就能拿到（见下方缺口守卫处的说明）。
-        meta 里会留下 partial_history / gap_from / gap_to 三个标记。
-    """
-    import numpy as np
-
-    def say(msg):
-        if on_progress:
-            try:
-                on_progress(msg)
-            except Exception:                            # noqa: BLE001
-                pass
-
-    p_npy = os.path.join(DATA, f"panel_{tag}.npy")
-    p_json = os.path.join(DATA, f"panel_{tag}.json")
-    if not (os.path.exists(p_npy) and os.path.exists(p_json)):
-        return None, None                            # 没有底表 → 交给全量抓
-
-    try:
-        with open(p_json, encoding="utf-8") as f:
-            meta = json.load(f)
-        mat = np.load(p_npy)
-    except Exception:                                # noqa: BLE001
-        return None, None
-
-    codes = meta.get("codes") or []
-    times = meta.get("times") or []
-    if not codes or mat.ndim != 2:
-        return None, None
-
-    # ★★ v1.2.4：缺口守卫 —— 尾部断得太多就别硬接，交回全量重抓。
-    #   增量通道只会追加"当前这一分钟"，中间没运行的分钟补不回来。
-    #   实测：10:47 关 → 11:17 开，面板尾部成了「10:47 → 11:17」，
-    #   29 分钟的空洞永久留在时间轴上（曲线越看越稀、像追不上数据）。
-    #   返回 (None, None) 后调用方（Worker.run）会自动降级为 build_panel，
-    #   而 kline 每次都给当天完整分时 → 一次全量就把洞补齐。
-    #
-    # ★★ v3.0.6（allow_gap）：缺口大时**不再直接放弃**，而是"先给当前、
-    #   历史留空"。起因是用户反馈「等了两分钟还没加载出来」——
-    #   实测日志：全量补抓在限流下跑了 **190 秒**（14:34:42→14:37:54），
-    #   这期间界面上只有上午 11:30 之前的旧数据，体感就是"没加载出来"。
-    #   而现在这一刻的真实资金流，其实**只要 5~6 次请求 / 约 0.3 秒**
-    #   就能拿到（ulist.np 一次给 200 个板块的当前累计净额）。
-    #
-    #   为什么不能像以前那样"把当前分钟直接接在 11:30 后面"：
-    #     渲染层的 x 轴是**真实分钟序号**（见 _minute_positions/_x_positions），
-    #     11:30 落在 x=119、14:34 落在 x=182 —— 直接相接会让 matplotlib
-    #     画出一条横跨 63 格的直线，等于**编造了 94 分钟的走势**。
-    #     这正是本项目反复修过的"假横线"缺陷，不能再犯。
-    #   所以 allow_gap=True 时：**把中间缺失的分钟显式补成 NaN 占位行**，
-    #   由渲染层的长缺口守卫在那里**断开曲线**，如实呈现"这段没有数据"。
-    gap = spot_gap_minutes(times)
-    if gap is not None and gap > SPOT_MAX_GAP_MIN:
-        if not allow_gap:
-            say(f"  面板落后 {gap} 分钟（> {SPOT_MAX_GAP_MIN}）→ 改走全量补齐空档")
-            return None, None
-        say(f"  面板落后 {gap} 分钟：allow_gap=True → 先补当前分钟，"
-            f"中间缺失分钟显式留空（图上断开，不编造走势）")
-
-    t0 = time.time()
-    # ★★ v2.0.1：detail=True —— 同一次请求顺带取回「领涨 / 领跌股」。
-    #   为什么要在这里（而不是另开一次请求）：字段数不影响请求次数与耗时，
-    #   另开请求会让每一次盘中刷新多一个 RTT，与"降低盘中读取延迟"相反。
-    #   净额抽出来喂面板，富信息另存一份供界面「龙头选手」列使用。
-    #   ★ v3.0.6：带上 names —— 替代源（腾讯）按板块**名称**给数据，
-    #     面板的 codes 是东财 secid，没有名称就贴不回去。
-    spot = fetch_spot_batch(codes, detail=True, names=meta.get("names") or {})
-    if not spot:
-        return None, None                            # 一个都没取到 → 不算刷新成功
-
-    net = {}
-    for k, v in spot.items():
-        n = (v or {}).get("net")
-        if n is not None:
-            net[k] = n
-    if not net:
-        return None, None
-
-    say(f"  增量快照：{len(net)}/{len(codes)} 个板块有值"
-        f"（{time.time()-t0:.1f}s）")
-    # 龙头快照落盘（失败不影响本次刷新 —— 它是附加信息，不是必需品）
-    try:
-        n_ld = save_spot_leaders(tag, spot)
-        if n_ld:
-            say(f"  龙头快照：{n_ld} 个板块的领涨股已更新")
-    except Exception:                                    # noqa: BLE001
-        pass
-
-    # ---- 当前分钟刻度：夹到**合法交易分钟**（v1.2.4 修复）----
-    #   ★ 旧写法 `datetime.now().strftime("%H:%M")` 直接当标签，而自动刷新
-    #     在午休/盘后也照跑 → 11:31~11:42 这类**不存在的交易分钟**被写进
-    #     时间轴（实测面板末尾长成「…10:47 11:17 11:43」）。
-    #     危害：_minute_index("11:43")=None → 横坐标无处安放、
-    #     缺口判定失效、悬停读数带着假时刻。
-    #   ★ 夹到合法刻度后："午休刷新" = 补全上午最后一分钟（11:30），
-    #     "盘后刷新" = 补全 15:00，语义正确且不退步（详见 clamp_to_bar）。
-    hm = clamp_to_bar()
-    if hm is None:
-        # 盘前（09:31 之前）：本就没有交易分钟可写。不追加行，
-        # 但仍把已取到的快照值**覆盖到最后一行**（当作最新累计值），
-        # 避免整次刷新白跑。
-        hm = times[-1] if times else None
-        if hm is None:
-            return None, None
-
-    # 把快照值写成新的一列/更新最后一列
-    col = np.full(len(codes), np.nan)
-    for j, secid in enumerate(codes):
-        v = net.get(secid)                    # ★ v2.0.1：用抽出来的净额字典
-        if v is not None:
-            col[j] = v / 1e8
-
-    # ★ 形状约定（务必记牢，见下方注释）：面板是 (时间 × 板块)
-    #     某一分钟所有板块的值  = mat[t, :]   （一行，长度=板块数）
-    #     某板块全部时间的值    = mat[:, j]   （一列，长度=分钟数）
-    #   col 的长度是**板块数**，因此它只能与 mat 的"行"运算。
-    if times and times[-1] == hm:
-        # 同一分钟 → 覆盖最后一行（同一分钟内的多次刷新取最新值）
-        row = mat[-1, :]
-        mat[-1, :] = np.where(np.isnan(col), row, col)
-    else:
-        # 新的一分钟 → 追加一行。
-        #   ★ 快照里缺的板块沿用**上一个时间点**的值（前向填充）。
-        #   ★★ 形状陷阱（本函数连续踩了两次，都要记）：
-        #      "上一分钟所有板块"是 `mat[-1, :]`（最后一行，长度=板块数），
-        #      **不是** `mat[:, -1]`（最后一列，长度=分钟数）。
-        #      写错通常直接抛 ValueError（999 vs 48），但**当分钟数恰好等于
-        #      板块数时会静默通过**，然后把 A 板块的值贴到 B 板块上 ——
-        #      那是最坏的情况：不报错、数据全错。
-        #   ★★ v1.2.4 追加防倒挂：**时间轴必须单调递增**。
-        #      夹到合法刻度后可能出现"新刻度 ≤ 末尾刻度"（例如午休期间
-        #      末尾已是 11:30、此刻又夹出 11:30，或历史面板末尾是脏值
-        #      11:43 而夹出来是 11:30）—— 此时**覆盖最后一行**，
-        #      绝不追加成倒挂的时间轴（倒挂会让 x 落位与曲线错乱）。
-        _newi = _minute_idx(hm)
-        _lasti = _minute_idx(times[-1]) if times else None
-        _back = (_newi is not None and _lasti is not None and _newi <= _lasti)
-        # ★ v3.0.6：前向填充的基准值必须取**插入占位行之前**的最后一行。
-        #   顺序写反的后果很隐蔽：占位行整行是 NaN，于是"快照里缺的板块"
-        #   会被填成 NaN 而不是上一分钟的已知值 —— 图上表现为那几条曲线
-        #   在当前分钟凭空断开。不报错、只是数据错，属于最难发现的一类。
-        _prev = (mat[-1, :].copy() if mat.shape[0]
-                 else np.zeros(len(codes)))
-        if _back:
-            row = mat[-1, :]
-            mat[-1, :] = np.where(np.isnan(col), row, col)
-            say(f"  刻度 {hm} 不新于末行 {times[-1]} → 覆盖末行（保持单调）")
-        else:
-            # ★ v3.0.6：缺口大的时候，把中间缺失的分钟**显式补成 NaN 占位行**。
-            #   为什么必须补：渲染层 x 轴是真实分钟序号，不补的话
-            #   11:30(x=119) 会与 14:34(x=182) 被一条直线连起来 —— 那是
-            #   编造出来的 94 分钟走势。补成 NaN 行后，渲染层的长缺口守卫
-            #   会让曲线在那里断开，如实呈现"这段没有数据"。
-            if (allow_gap and _newi is not None and _lasti is not None
-                    and _newi > _lasti + 1):
-                n_fill = _newi - _lasti - 1
-                mat = np.vstack([mat, np.full((n_fill, len(codes)), np.nan)])
-                times = list(times) + [_label_of_idx(i)
-                                       for i in range(_lasti + 1, _newi)]
-                meta["partial_history"] = True
-                meta["gap_from"] = times[_lasti]
-                meta["gap_to"] = hm
-                say(f"  已插入 {n_fill} 个缺失分钟占位（{times[_lasti]}→{hm}，"
-                    f"NaN，图上断开；全量补齐后会填实）")
-            newcol = np.where(np.isnan(col), _prev, col)
-            mat = (np.vstack([mat, newcol]) if mat.shape[0]
-                   else newcol[None, :])
-            times = list(times) + [hm]
-
-    try:
-        # ★★ v3.0.5：改为**原子成对写**（先 json 后 npy）——
-        #   旧写法先 np.save(npy) 再 json.dump(json)，读者夹在中间会拿到
-        #   「新矩阵 + 旧 times」→ 曲线被续到 15:00 画成假横线。
-        #   详见 save_panel / _atomic_write_bytes 的说明。
-        meta["times"] = times
-        meta["source"] = "live"
-        save_panel(tag, meta, mat)
-    except Exception as e:                           # noqa: BLE001
-        log_note = f"spot refresh save failed: {e}"
-        print("  " + log_note, flush=True)
-        return None, None
-
-    # 指数同步走批量/轻量通道（复用 fetch_all_index_trends 的两条分时）
-    try:
-        idx = fetch_index_trend()
-    except Exception:                                # noqa: BLE001
-        idx = []
-    if idx:
+    """[shell] 数据读取能力已移除。不刷新面板，保留本地已有数据。"""
+    if on_progress:
         try:
-            _atomic_write_json(os.path.join(DATA, f"index_{tag}.json"), idx)
-        except Exception:                            # noqa: BLE001
+            on_progress(0, 0, "本版本不含数据读取能力")
+        except Exception:            # noqa: BLE001
             pass
-    try:
-        iall = fetch_index_trend("47.800000")
-    except Exception:                                # noqa: BLE001
-        iall = []
-    if iall:
-        try:
-            _atomic_write_json(os.path.join(DATA, f"index_all_{tag}.json"), iall)
-        except Exception:                            # noqa: BLE001
-            pass
-
-    return meta, mat
+    return None
 
 
 # ---------------------------------------------------------------- 失败板块留痕

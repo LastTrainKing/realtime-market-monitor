@@ -31,7 +31,7 @@ import numpy as np
 import flowdata
 import store
 
-HIS = "https://push2his.eastmoney.com"
+# [shell] 原 push2his 主机常量已移除：本版本不联网取数。
 LMT = 40                                   # daykline 实测可用上限（覆盖 30 日窗口有余）
 WORKERS = 6
 BACKOFF = (1.2, 3.0, 6.0)                  # 逐次重试等待秒数
@@ -65,37 +65,8 @@ def _atomic_json(path, obj):
 
 # ---------------------------------------------------------------- 日级数据抓取
 def _fetch_one_daykline(secid):
-    """单板块日级资金流（带退避重试）。返回 [(yyyymmdd, 主力净额元), ...]。
-
-    ★ v3.0.6：替代源下**直接返回空**（见下方守卫）—— 本模块硬编码了
-      `push2his.eastmoney.com`，在替代源下继续打等于对已封禁我们的服务
-      继续发请求，只会让封禁更久。
-    """
-    try:
-        import source as _src
-        if _src.skip_reason("day_flow_history"):
-            return []
-    except Exception:                                    # noqa: BLE001
-        pass
-    url = (f"{HIS}/api/qt/stock/fflow/daykline/get?lmt={LMT}&klt=101&secid={secid}"
-           f"&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56&ut={flowdata.UT}")
-    for k in range(len(BACKOFF) + 1):
-        j = flowdata._get(url, tries=1, timeout=15)
-        if j and j.get("data") and j["data"].get("klines"):
-            rows = []
-            for line in j["data"]["klines"]:
-                p = line.split(",")
-                if len(p) < 2:
-                    continue
-                d = p[0][:10].replace("-", "")
-                try:
-                    rows.append((d, float(p[1])))
-                except (ValueError, IndexError):
-                    continue
-            return rows
-        if k < len(BACKOFF):
-            time.sleep(BACKOFF[k])
-    return None
+    """[shell] 数据读取能力已移除。恒返回空列表。"""
+    return []
 
 
 class _Breaker:

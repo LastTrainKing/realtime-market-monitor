@@ -8596,7 +8596,9 @@ def preflight():
     现在 flowdata 已改为纯标准库，这里再兜一道底，出问题也给出可读提示。
     """
     problems = []
-    stdlib_mods = ["json", "os", "time", "threading", "urllib.request",
+    # [shell] 已移除 urllib.request：本版本不含任何联网取数能力，
+    # 不再需要检查网络库是否被打包收录。
+    stdlib_mods = ["json", "os", "time", "threading",
                    "concurrent.futures", "traceback", "datetime"]
     for m in stdlib_mods:
         try:
