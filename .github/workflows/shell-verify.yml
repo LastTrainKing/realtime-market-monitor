@@ -1,0 +1,136 @@
+name: shell-verify
+
+# Shell 版（无数据读取能力）的自动验收。
+#
+# 本工作流承担两件事：
+#   1. 静态守卫：运行时代码不得具备联网取数能力
+#   2. 编译验证：Rust 后端必须能通过 cargo check（本地无 Rust 工具链时，
+#      这是唯一能证明改动没写坏的手段）
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  no-network-guard:
+    name: 无网络能力守卫
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 静态扫描
+        run: python flowlive-native/scripts/check_no_network.py .
+
+      - name: 复核 Cargo 依赖树中无 HTTP 客户端
+        run: |
+          set -e
+          cd command-center/backend
+          if grep -Eq '^\s*(reqwest|hyper|ureq|isahc|surf)\s*=' Cargo.toml; then
+            echo "::error::Cargo.toml 中存在 HTTP 客户端依赖"
+            grep -En '^\s*(reqwest|hyper|ureq|isahc|surf)\s*=' Cargo.toml
+            exit 1
+          fi
+          echo "✓ 无 HTTP 客户端依赖"
+
+  python-syntax:
+    name: Python 语法与导入
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装运行期依赖
+        run: python -m pip install --quiet numpy
+
+      - name: 编译检查
+        run: |
+          cd flowlive-native/build
+          python -m compileall -q core core2 app_main_v203.py
+
+      - name: 导入冒烟
+        run: |
+          cd flowlive-native/build
+          python - <<'PY'
+          import sys, tempfile, importlib
+          sys.path.insert(0, "core")
+          import flowdata as fd
+          fd.set_data_dir(tempfile.mkdtemp())
+          mods = ["source", "store", "archive", "universe", "tradingtime",
+                  "tradecal", "salience", "opensnap", "leader", "watchlist",
+                  "backfill", "localio"]
+          for m in mods:
+              importlib.import_module(m)
+          import source as src
+          assert src.active() == "local", "数据源必须为 local"
+          caps = src.CAPS[src.LOCAL]
+          net_on = [k for k, v in caps.items() if v and not k.startswith("local")]
+          assert not net_on, f"联网能力未关闭: {net_on}"
+          print("✓ %d 个模块导入正常，联网能力全部关闭" % len(mods))
+          PY
+
+      - name: 离线回放链路
+        run: |
+          cd flowlive-native/build
+          python - <<'PY'
+          import sys, tempfile, os
+          sys.path.insert(0, "core")
+          import flowdata as fd
+          d = tempfile.mkdtemp()
+          fd.set_data_dir(d)
+          import localio
+          csv_path = os.path.join(d, "sample_20261030.csv")
+          open(csv_path, "w", encoding="utf-8-sig").write(
+              "时间,板块代码,板块名称,主力净额\n"
+              "09:31,BK1036,半导体,1.5e8\n"
+              "09:32,BK1036,半导体,2.1e8\n")
+          meta, mat = localio.import_csv(csv_path, "20261030")
+          assert mat.shape == (2, 1), mat.shape
+          assert localio.list_panels(), "面板列表为空"
+          print("✓ CSV 导入 -> 面板 -> 列表 全链路通过")
+          PY
+
+  rust-check:
+    name: Rust 后端编译
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            command-center/backend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('command-center/backend/Cargo.lock') }}
+
+      - name: cargo check
+        run: |
+          cd command-center/backend
+          cargo check --all-targets
+
+      - name: 确认依赖树中无 HTTP 客户端
+        run: |
+          cd command-center/backend
+          if cargo tree 2>/dev/null | grep -Eq '^\s*[|`+-]*\s*(reqwest|ureq|isahc|surf) v'; then
+            echo "::error::依赖树中出现 HTTP 客户端"
+            cargo tree | grep -E '(reqwest|ureq|isahc|surf) v'
+            exit 1
+          fi
+          echo "✓ 依赖树中无 HTTP 客户端"
+
+      - name: 单元测试（含"所有请求被拒"断言）
+        run: |
+          cd command-center/backend
+          cargo test --lib net::client -- --nocapture

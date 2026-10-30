@@ -82,79 +82,8 @@ def save_snap(tag, nodes, data_dir=None):
 
 # ---------------------------------------------------------------- 抓取
 def _fetch_list(fs, fields, workers=3, page_tries=6):
-    """分页抓完一个 clist 列表（pz=100 硬上限，并发翻页）。
-
-    ★★ v3.0.4 两处改进：**首页重试 + 失败页补抓**、**并发降到 3**。
-
-      【实测事实】（2026-09-23 盘中）
-        · `capture_node` 采回的 node 里 `sectors`/`stocks` 曾经是**空列表**，
-          而 `build_payload` 只判"节点是否存在"→ 界面拿到"存在但为空"的节点。
-        · 换到 13 秒后再采一次，**又**是空的，且日志出现
-          `[net] keep-alive 通道探测失败`。
-        · 而单独、低频地重抓同一批板块，**100% 成功**。
-
-      【根因】东财的限流是按**单位时间的请求总量**触发的，不是按单个请求。
-        一次 `capture_node` 的峰值并发高达 3 个列表 × 6 并发翻页 = **18**，
-        ~70 个请求几乎同时发出 —— 必然踩线。
-        而失败后的行为是：首页失败 → total=0 → **直接返回空列表**，
-        调用方完全无法区分"这个列表本来就没数据"和"请求被限流了"。
-
-      【修法】
-        ① 并发 6 → **3**（峰值 3 列表 × 3 = 9），页间不再瞬时齐发；
-        ② 首页最多重试 `page_tries` 次（退避 0.3/0.6/0.9s）——
-           首页决定总页数，它失败等于整个列表报废，值得多试；
-        ③ 并发抓完后，对**失败的页**串行补抓（最多 3 次，带退避）。
-        ④ 页内轻微节流（`_PAGE_GAP`），把请求摊开而不是砸下去。
-    """
-    url0 = ("https://push2.eastmoney.com/api/qt/clist/get?pn={pn}&pz=%d"
-            "&po=1&np=1&fltt=2&invt=2&fid=f62&fs=%s&fields=%s&ut=%s"
-            % (_PAGE, fs, fields, flowdata.UT))
-
-    def _page(pn):
-        time.sleep(_PAGE_GAP)                        # ④ 轻度节流，摊开请求
-        j = flowdata._get(url0.format(pn=pn), tries=2, timeout=10)
-        d = (j or {}).get("data") or {}
-        return d.get("total") or 0, d.get("diff") or []
-
-    # ---- 首页：决定"总共多少页"，失败必须重试 ----
-    #   ★ 实测板块列表（m:90+t:2 / m:90+t:3）比个股列表更容易被限流，
-    #     所以重试次数从 4 提到 6、退避 0.5~3.0s（累计约 10s）。
-    #     板块列表只有 10 页，值得为首页多等一会儿 ——
-    #     它失败就意味着"板块榜"整块没有数据。
-    total, first = 0, []
-    for k in range(page_tries):
-        total, first = _page(1)
-        if first:
-            break
-        time.sleep(0.5 * (k + 1))
-    if not first:
-        return []                                    # 首页彻底失败：如实返回空
-
-    rows = list(first)
-    if total <= _PAGE:
-        return rows
-    pages = min((total + _PAGE - 1) // _PAGE, 80)    # 80 页兜底，防异常 total
-
-    # ---- 后续页：并发抓，记录失败的页 ----
-    failed_pages = []
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        for pn, diff in ex.map(lambda p: (p, _page(p)[1]),
-                               range(2, pages + 1)):
-            if diff:
-                rows.extend(diff)
-            else:
-                failed_pages.append(pn)
-
-    # ---- 失败页补抓（串行 + 退避：并发正是触发限流的原因）----
-    for pn in failed_pages:
-        for k in range(3):
-            _t, diff = _page(pn)
-            if diff:
-                rows.extend(diff)
-                break
-            time.sleep(0.3 * (k + 1))
-
-    return rows
+    """[shell] 数据读取能力已移除。恒返回空列表。"""
+    return []
 
 
 def _num(x):

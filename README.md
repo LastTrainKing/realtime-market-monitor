@@ -8,8 +8,59 @@
 > **★ 只想拿来用：优先 `v2.0.4` 或 `v2.0.1`** —— 理由与代价见
 > [§4.4 版本选用建议](#44-版本选用建议仓库所有者标注)。
 >
-> ⚠️ **使用前必读**：[接口使用风险](#九-接口使用风险必读) ·
+> ⚠️ **使用前必读**：[接口使用风险](#九接口使用风险必读) ·
 > [免责声明](DISCLAIMER.md) · [许可状态](LICENSE.md)
+
+---
+
+## 🛡️ Shell 版：不含数据读取能力的发布形态
+
+> 分支 [`shell/no-data-read`](https://github.com/LastTrainKing/realtime-market-monitor/tree/shell/no-data-read)
+> · **总入口：[docs/SHELL.md](docs/SHELL.md)**
+> · 细节：[flowlive-native/SHELL.md](flowlive-native/SHELL.md) · [command-center/SHELL.md](command-center/SHELL.md)
+
+**为什么有这个东西**：上游行情接口已对爬虫来源做风控标记。
+任何联网取数行为都会导致**运行机器的 IP 被封禁**——这不是"能不能用"的问题，
+而是"用了会伤到使用者"的问题。
+
+因此本仓库额外提供一个**不具备数据读取能力**的形态：保留界面、算法与复盘能力，
+移除全部联网取数实现。
+
+### 两种形态（同一套代码，环境变量切换）
+
+| 形态 | 开关 | 能力 | 生效范围 |
+|---|---|---|---|
+| **离线复盘终端**（默认） | `FLOWLIVE_SHELL_MODE=replay` | 导入本地 CSV/JSON、回放历史、跑全部算法、导出报告 | **仅 Python API 层** |
+| **纯空壳** | `FLOWLIVE_SHELL_MODE=pure` | 拒绝导入，无任何数据入口 | **仅 Python API 层** |
+
+> **界面没有接导入入口。** `app_main_v203.py` 未 import `localio`，全仓零 UI 调用点；
+> Rust 版连这个环境变量都没有。当前只能在 Python 里调 API，不能在界面里点按钮。
+> 详见 [docs/SHELL.md §三](docs/SHELL.md#三两种形态当前生效范围)。
+
+### 做法：换实现，不砍层
+
+UI 与算法层依赖数据层输出的 `Panel` / `Snapshot` 结构，直接删除采集层会导致启动即崩。
+两版的数据访问都收敛在单一抽象层后面，因此只需替换那一个实现：
+
+| 版本 | 切断点 | 方式 |
+|---|---|---|
+| Python 原生版 | `core/flowdata.py` + `core/source.py` | 三源合一为 `local`；26 个网络函数删除，8 个取数函数改空返回 |
+| Rust 指挥中心 | `net/client.rs` | `HttpClient` 本就是唯一出口；所有 `get_*` 立即返回 `NetError::Disabled`，移除 `reqwest` |
+
+### 怎么验证"真的没有取数能力"
+
+```bash
+python flowlive-native/scripts/check_no_network.py .
+```
+
+三条硬检查，任一不通过即失败：
+1. 运行时代码不得 import 任何网络库
+2. 运行时代码不得出现 `http(s)://` 字面量
+3. `Cargo.toml` 不得依赖 HTTP 客户端
+
+另有 CI 工作流 `.github/workflows/shell-verify.yml` 做 `cargo check` 与依赖树检查。
+
+---
 
 **English abstract** — Archive of two independent A-share intraday capital-flow
 monitoring tools: `FlowLiveNative` (Python + PySide6 desktop app, v1.2.5 → v3.0.6,

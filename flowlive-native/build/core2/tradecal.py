@@ -32,8 +32,7 @@ from datetime import datetime, timedelta
 import flowdata
 
 REF_SECID = "90.BK0475"                    # 银行板块：历史悠久、每个交易日必有数据
-HIS = "https://push2his.eastmoney.com"
-
+# [shell] 原 push2his 主机常量已移除：本版本不联网取数。
 # ★ v1.2.1：进程内日历缓存。
 #   取值策略：**同一自然日**内 + 距上次成功不超过 CAL_TTL 秒 → 直接用内存。
 #   为什么还要"同一自然日"这个条件：跨日之后交易日历可能新增一天
@@ -94,37 +93,8 @@ def _cal_file():
 
 
 def _fetch_days_from_daykline(lmt=40):
-    """从日级资金流接口取最近 lmt 个交易日（YYYYMMDD 升序）。失败返回 None。
-
-    ★ v3.0.6：替代源下**不发请求、直接返回 None**（本模块硬编码 push2his）。
-      返回 None 会走原有的"本地缓存 → 日历兜底"路径，功能不受影响。
-      ★ 注意 core2/ 是"同名覆盖副本"，改动必须与 core/tradecal.py 保持一致。
-    """
-    try:
-        import source as _src
-        if _src.skip_reason("trade_calendar"):
-            return None
-    except Exception:                                    # noqa: BLE001
-        pass
-    url = (f"{HIS}/api/qt/stock/fflow/daykline/get?lmt={lmt}&klt=101&secid={REF_SECID}"
-           f"&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56&ut={flowdata.UT}")
-    # ★ 只试 1 次、3 秒封顶（v2.0.2 从 10 秒收紧）：push2his 限流是常态，
-    #   日历有本地缓存兜底，绝不能为了让日历「更新鲜」而把启动卡住。
-    #   非交易时段本就不会走到这里（refresh 只在交易时段为 True）；
-    #   盘中超时的代价也只是 trusted=False → 跳过窗口清理，为零。
-    #   ★ 本文件放在 core2/：WorkBuddy 快照组件锁住了 core/tradecal.py
-    #     的写入与改名（2026-09-22 实测），sys.path 里 core2 优先于 core，
-    #     本副本即生效版本。锁释放后应并回 core/ 并删掉 core2。
-    j = flowdata._get(url, tries=1, timeout=3)
-    if not j or not j.get("data") or not j["data"].get("klines"):
-        return None
-    days = []
-    for line in j["data"]["klines"]:
-        d = line.split(",")[0][:10].replace("-", "")
-        if len(d) == 8 and d.isdigit():
-            days.append(d)
-    days = sorted(set(days))
-    return days or None
+    """[shell] 数据读取能力已移除。交易日历只读本地缓存。"""
+    return []
 
 
 def _load_cache():

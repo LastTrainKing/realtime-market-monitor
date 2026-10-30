@@ -9,6 +9,59 @@
 
 ---
 
+## 〇、Shell 版（无数据读取能力）— 2026-10-30
+
+> 本次变更**不属于原作者的开发记录**，是归档后的新增发布形态。
+> 原版本记录保持原样，未作任何修改。
+
+**动机**：上游行情接口已对爬虫来源做风控标记，联网取数会导致运行机器 IP 被封禁。
+
+**做法**：换实现，不砍层。两版的数据访问都收敛在单一抽象层后，
+替换那一个实现即可让上层走既有降级路径。
+
+| 版本 | 改动 |
+|---|---|
+| FlowLiveNative | `flowdata.py` 2531 → 1101 行（删 26 个网络函数）；`source.py` 663 → 155 行（三源合一为 `local`）；新增 `localio.py`；删除 `server.py` |
+| CommandCenter | `net/client.rs` 重写（移除 `reqwest`，所有请求立即返回 `NetError::Disabled`）；`Cargo.toml` 移除 `reqwest` |
+
+**两种形态**：`FLOWLIVE_SHELL_MODE=replay`（离线复盘终端，默认）/ `=pure`（纯空壳）。
+
+**新增**：`scripts/check_no_network.py`（静态守卫）、`.github/workflows/shell-verify.yml`（CI）。
+
+**文档**（2026-10-30 校准）：
+
+| 文档 | 内容 |
+|---|---|
+| `docs/SHELL.md` | 总入口：需求映射、两种形态、切断点、5 分钟验收、CI 结论、已知限制 |
+| `docs/README.md` | docs 索引、术语表、状态标签定义 |
+| `docs/DATA-BOUNDARY.md` | 边界定义、代码落点、三层验证、**扫描覆盖范围**、改动守则 |
+| `flowlive-native/SHELL.md` | Python 版：改了什么、数据从哪来、**生效范围限定**、验证记录 |
+| `command-center/SHELL.md` | Rust 版：单点切断、**两种形态不存在于本版**、回放未验证 |
+| `README.md` | Shell 章节：两形态生效范围 + 指向 `docs/SHELL.md` |
+| `market-agent/README.md` | Agent 工作台说明（独立仓库） |
+
+**验收（2026-10-30 重跑）**：
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 静态守卫 | `python flowlive-native/scripts/check_no_network.py .` | 15 文件 0 违规，退出码 0 |
+| 模块导入 | 见 `docs/SHELL.md §5.2` | 12 个模块导入正常，`source.active() == "local"` |
+| 离线回放链路 | 见 `docs/SHELL.md §5.3` | CSV 导入 → 面板 → 列表，形状 (2, 1) |
+| Rust 编译 | CI `cargo check` | success（[run 41040147833](https://github.com/LastTrainKing/realtime-market-monitor/actions/runs/41040147833)） |
+| Rust 依赖树 | CI 检查 | success（无 HTTP 客户端） |
+| Rust 单元测试 | CI | **未取到结论**（查询时 in_progress） |
+| 断网启动 / 抓包 | — | **未验证**（需目标机器） |
+
+**未完成**：
+
+1. 界面未接导入入口（`app_main_v203.py` 未 import `localio`），两种形态仅存在于 Python API 层；
+2. Rust 版无 `FLOWLIVE_SHELL_MODE` 开关；
+3. Rust 离线回放未验证（`history/fetcher.rs`、`preload.rs` 会抓数，现返回 `Err(Disabled)`）；
+4. `collector/*` 需先抽 `Snapshot` DTO 才能移除；
+5. 打包（PyInstaller / Tauri）需在目标机器执行。
+
+---
+
 ## 一、FlowLiveNative（原生版）
 
 ### v3.0.6 — 2026-09-23（最终版）
